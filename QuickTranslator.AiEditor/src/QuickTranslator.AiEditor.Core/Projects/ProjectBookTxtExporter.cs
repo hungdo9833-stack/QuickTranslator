@@ -39,8 +39,12 @@ public static class ProjectBookTxtExporter
         string directory = Path.GetDirectoryName(destination)!;
         if (!Directory.Exists(directory))
             throw new DirectoryNotFoundException("Thư mục lưu TXT không tồn tại: " + directory);
-        if (string.Equals(destination, session.ManifestPath, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Không được ghi đè tệp Project.");
+        string projectRoot = Path.GetFullPath(session.RootDirectory).TrimEnd(Path.DirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (destination.StartsWith(projectRoot, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(destination, session.ManifestPath, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "Hãy xuất TXT ra ngoài thư mục Project để không ghi đè tệp chương, backup hoặc dữ liệu dự án.");
 
         // Temp file in the destination directory: no partial output if a chapter fails.
         string temporary = Path.Combine(directory, "." + Path.GetFileName(destination) +
