@@ -126,6 +126,8 @@ public sealed class OllamaClient : IOllamaBackendClient
                         model = options.Model,
                         messages = new[] { new { role = "user", content = prompt } },
                         stream = false,
+                        // Translation uses final answers only; don't spend output tokens on model thinking.
+                        think = false,
                         options = new
                         {
                             temperature = options.Temperature,
