@@ -37,6 +37,7 @@ public sealed class OllamaClientTests
             var body = json.RootElement;
             Assert.Equal("translategemma:12b", body.GetProperty("model").GetString());
             Assert.False(body.GetProperty("stream").GetBoolean());
+            Assert.False(body.GetProperty("think").GetBoolean());
             Assert.Single(body.GetProperty("messages").EnumerateArray());
             Assert.Equal("user", body.GetProperty("messages")[0].GetProperty("role").GetString());
             Assert.Equal("test prompt", body.GetProperty("messages")[0].GetProperty("content").GetString());
