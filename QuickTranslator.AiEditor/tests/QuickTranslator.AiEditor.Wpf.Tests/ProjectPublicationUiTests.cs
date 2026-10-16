@@ -82,6 +82,37 @@ public sealed class ProjectPublicationUiTests
     });
 
     [Fact]
+    public Task Pdf_export_respects_selected_chapter_range() => StaHost.Run(async () =>
+    {
+        using var fixture = new WorkspaceFixture();
+        await fixture.CreateProjectAsync();
+        ChapterDocument old = await fixture.AddChapterAsync("Chương 299", 299);
+        old.Segments[0].UserDraft = "Không xuất chương cũ.";
+        old.Segments[0].Status = SegmentStatus.AwaitingReview;
+        await fixture.Repository.UpdateChapterAsync(fixture.Project, old);
+        ChapterDocument first = await fixture.AddChapterAsync("Chương 300", 300);
+        first.Segments[0].UserDraft = "Chương chọn đầu tiên.";
+        first.Segments[0].Status = SegmentStatus.AwaitingReview;
+        await fixture.Repository.UpdateChapterAsync(fixture.Project, first);
+        ChapterDocument last = await fixture.AddChapterAsync("Chương 301", 301);
+        last.Segments[0].UserDraft = "Chương chọn cuối cùng.";
+        last.Segments[0].Status = SegmentStatus.AwaitingReview;
+        await fixture.Repository.UpdateChapterAsync(fixture.Project, last);
+        var service = new ProjectPublicationService(fixture.Repository, fixture.Get<ProjectCatalog>("_projectCatalog"));
+        ProjectPublicationInspection inspection = await service.InspectAsync(fixture.Project,
+            range: new ProjectPublicationRange(StartChapterNumber: 300));
+        string path = Path.Combine(fixture.Root, "range.pdf");
+
+        ProjectPublicationReport report = await ProjectPdfExporter.ExportAsync(service, fixture.Project,
+            inspection, path, new ProjectPublicationOptions());
+
+        Assert.Equal(2, report.ExportedChapterCount);
+        using var pdf = PdfReader.Open(path, PdfDocumentOpenMode.Import);
+        Assert.True(pdf.PageCount >= 2);
+        Assert.Equal("Truyện thử tổng hợp", pdf.Info.Title);
+    });
+
+    [Fact]
     public Task Pdf_export_creates_a_readable_unicode_book_without_changing_project_data() => StaHost.Run(async () =>
     {
         using var fixture = new WorkspaceFixture();
