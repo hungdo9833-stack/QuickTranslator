@@ -75,6 +75,16 @@ internal sealed class ChineseOrdinalHeadingRecognizer : IChapterTitleRecognizer
         while (markerIndex < text.Length && char.IsWhiteSpace(text[markerIndex])) markerIndex++;
         if (ordinalText.Length == 0 || markerIndex >= text.Length || !ChineseNumberParser.TryParse(ordinalText, out int number)) return false;
         char marker = text[markerIndex];
+
+        // In Chinese prose, 第N节课 / 第N節課 means "the N-th school lesson", NOT
+        // a section heading. Treating it as a chapter boundary fragments genuine
+        // chapters and creates spurious duplicate chapter numbers (2, 3, ...).
+        // A real 第N节 heading remains supported when followed by whitespace,
+        // punctuation or another standalone title.
+        if ((marker is '节' or '節') && markerIndex + 1 < text.Length &&
+            (text[markerIndex + 1] is '课' or '課'))
+            return false;
+
         ChapterHeadingKind kind;
         if (marker is '章' or '回' or '节' or '節') kind = ChapterHeadingKind.Chapter;
         else if (marker is '卷' or '部' or '篇' or '集') kind = ChapterHeadingKind.Volume;
