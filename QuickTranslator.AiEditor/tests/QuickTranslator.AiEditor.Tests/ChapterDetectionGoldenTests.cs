@@ -28,6 +28,29 @@ public sealed class ChapterDetectionGoldenTests
         Assert.InRange(candidate.Confidence, 0, 1);
     }
 
+    [Theory]
+    [InlineData("第二节课是语文课，学生都回到教室。")]
+    [InlineData("第三節課結束後，大家走出教室。")]
+    [InlineData("第二节课结束是半个小时的活动时间。")]
+    [InlineData("第三节课，马军他们班的语文老师走进了教室。")]
+    public void Chinese_school_lessons_are_not_chapter_headings(string lessonLine)
+    {
+        string source = "第1章 开始\n第一段正文。\n" + lessonLine +
+            "\n后续正文。\n第2章 继续\n第二章正文。";
+        ImmutableImportPlan plan = new ChapterDetector().Detect(source);
+        Assert.Equal(new int?[] { 1, 2 }, plan.Chapters.Select(x => x.ChapterNumber).ToArray());
+        Assert.Contains(lessonLine, plan.Slice(plan.Chapters.First().BodySpan), StringComparison.Ordinal);
+        Assert.Equal(source, plan.ReconstructSource());
+    }
+
+    [Fact]
+    public void Numbered_sections_without_school_lesson_word_still_work()
+    {
+        const string source = "第1节 开始\n正文A。\n第2節 下一节\n正文B。";
+        ImmutableImportPlan plan = new ChapterDetector().Detect(source);
+        Assert.Equal(new int?[] { 1, 2 }, plan.Chapters.Select(x => x.ChapterNumber).ToArray());
+    }
+
     [Fact]
     public void Supports_volume_resets_without_cross_volume_sequence_errors()
     {
