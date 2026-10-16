@@ -137,6 +137,77 @@ public sealed class ProjectPublicationTests : IDisposable
         Assert.Equal(original, await File.ReadAllTextAsync(managedPath));
     }
 
+    [Fact]
+    public async Task Chapter_range_300_to_end_exports_only_selected_chapters_in_catalog_order()
+    {
+        ProjectSession session = await _repository.CreateAsync(Path.Combine(_root, "Range"), "Truyện 500 chương");
+        await AddChapterAsync(session, 299, "Chương 299", "Không xuất.");
+        await AddChapterAsync(session, 500, "Chương 500", "Cuối truyện.");
+        await AddChapterAsync(session, 301, "Chương 301", "Tiếp theo.");
+        await AddChapterAsync(session, 300, "Chương 300", "Bắt đầu.");
+        var service = new ProjectPublicationService(_repository, new ProjectCatalog(_repository));
+        var range = new ProjectPublicationRange(StartChapterNumber: 300);
+        Dictionary<string, string> original = HashProjectFiles(session.RootDirectory);
+
+        ProjectPublicationInspection inspection = await service.InspectAsync(session, range: range);
+        Assert.Equal(3, inspection.TotalChapterCount);
+        Assert.Equal(range, inspection.Range);
+
+        string path = Path.Combine(_root, "range-300.txt");
+        ProjectPublicationReport report = await service.ExportTextAsync(session, inspection, path,
+            new ProjectPublicationOptions(IncludeProjectTitle: false));
+
+        Assert.Equal(3, report.ExportedChapterCount);
+        string output = await File.ReadAllTextAsync(path);
+        Assert.DoesNotContain("Chương 299", output);
+        Assert.DoesNotContain("Không xuất.", output);
+        Assert.True(output.IndexOf("Chương 300", StringComparison.Ordinal) <
+            output.IndexOf("Chương 301", StringComparison.Ordinal));
+        Assert.True(output.IndexOf("Chương 301", StringComparison.Ordinal) <
+            output.IndexOf("Chương 500", StringComparison.Ordinal));
+        Assert.Equal(original, HashProjectFiles(session.RootDirectory));
+    }
+
+    [Fact]
+    public async Task Range_checks_only_selected_chapters_and_supports_explicit_end()
+    {
+        ProjectSession session = await _repository.CreateAsync(Path.Combine(_root, "RangeValidation"), "Truyện thử");
+        ChapterDocument untranslated = TranslationService.CreateChapter("Chương 299", "原文未翻译。");
+        await _repository.AddChapterAsync(session, untranslated, 299);
+        await AddChapterAsync(session, 300, "Chương 300", "Đã dịch 300.");
+        await AddChapterAsync(session, 301, "Chương 301", "Đã dịch 301.");
+        await AddChapterAsync(session, 500, "Chương 500", "Đã dịch 500.");
+        var service = new ProjectPublicationService(_repository, new ProjectCatalog(_repository));
+        var range = new ProjectPublicationRange(300, 301);
+
+        ProjectPublicationInspection inspection = await service.InspectAsync(session, range: range);
+        Assert.Equal(2, inspection.TotalChapterCount);
+        Assert.False(inspection.RequiresConfirmation);
+        string path = Path.Combine(_root, "range-300-301.txt");
+        await service.ExportTextAsync(session, inspection, path, new ProjectPublicationOptions());
+        string exported = await File.ReadAllTextAsync(path);
+        Assert.DoesNotContain("Chương 299", exported);
+        Assert.DoesNotContain("Chương 500", exported);
+        Assert.Contains("Chương 300", exported);
+        Assert.Contains("Chương 301", exported);
+        Assert.Equal(4, (await service.InspectAsync(session)).TotalChapterCount);
+    }
+
+    [Fact]
+    public async Task Invalid_or_missing_range_boundaries_are_rejected_not_silently_shifted()
+    {
+        ProjectSession session = await _repository.CreateAsync(Path.Combine(_root, "InvalidRange"), "Truyện thử");
+        await AddChapterAsync(session, 300, "Chương 300", "Đã dịch.");
+        await AddChapterAsync(session, 500, "Chương 500", "Đã dịch.");
+        var service = new ProjectPublicationService(_repository, new ProjectCatalog(_repository));
+        await Assert.ThrowsAsync<ArgumentException>(() =>
+            service.InspectAsync(session, range: new ProjectPublicationRange(500, 300)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.InspectAsync(session, range: new ProjectPublicationRange(299)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.InspectAsync(session, range: new ProjectPublicationRange(300, 501)));
+    }
+
     private async Task<ChapterDocument> AddChapterAsync(ProjectSession session, int number, string title, string text)
     {
         ChapterDocument chapter = TranslationService.CreateChapter(title, $"第{number}章 原文。");

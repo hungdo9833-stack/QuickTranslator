@@ -52,6 +52,36 @@ public sealed class ProjectPublicationUiTests
     });
 
     [Fact]
+    public Task Publication_window_checks_selected_range_and_disables_export_when_range_changes() => StaHost.Run(async () =>
+    {
+        using var fixture = new WorkspaceFixture();
+        await fixture.CreateProjectAsync();
+        ChapterDocument old = await fixture.AddChapterAsync("Chương 299", 299);
+        ChapterDocument selected = await fixture.AddChapterAsync("Chương 300", 300);
+        selected.Segments[0].UserDraft = "Bản dịch 300.";
+        selected.Segments[0].Status = SegmentStatus.AwaitingReview;
+        await fixture.Repository.UpdateChapterAsync(fixture.Project, selected);
+        var service = new ProjectPublicationService(fixture.Repository, fixture.Get<ProjectCatalog>("_projectCatalog"));
+        var window = new ProjectPublicationWindow(fixture.Project, service);
+        try
+        {
+            await window.LoadInspectionAsync();
+            Assert.Equal(2, window.CurrentInspection?.TotalChapterCount);
+            var from = Assert.IsType<TextBox>(window.FindName("StartChapterInput"));
+            var to = Assert.IsType<TextBox>(window.FindName("EndChapterInput"));
+            from.Text = "300";
+            Assert.False(((Button)window.FindName("ExportButton")).IsEnabled);
+            await window.LoadInspectionAsync();
+            Assert.Equal(1, window.CurrentInspection?.TotalChapterCount);
+            Assert.False(window.CurrentInspection?.RequiresConfirmation);
+            Assert.Equal(300, window.CurrentInspection?.Range?.StartChapterNumber);
+            to.Text = "299";
+            Assert.False(((Button)window.FindName("ExportButton")).IsEnabled);
+        }
+        finally { window.Close(); }
+    });
+
+    [Fact]
     public Task Pdf_export_creates_a_readable_unicode_book_without_changing_project_data() => StaHost.Run(async () =>
     {
         using var fixture = new WorkspaceFixture();

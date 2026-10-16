@@ -41,7 +41,7 @@ internal static class ProjectPdfExporter
             }
 
             await foreach (ProjectPublicationChapter chapter in service.ReadChaptersAsync(session,
-                               inspection.ProjectRevision, progress, cancellationToken))
+                               inspection.ProjectRevision, progress, cancellationToken, inspection.Range))
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (pageHasContent) section.AddPageBreak();

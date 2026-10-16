@@ -28,7 +28,7 @@ public partial class ProjectPublicationWindow : Window
         _service = service ?? throw new ArgumentNullException(nameof(service));
         _openChapter = openChapter;
         InitializeComponent();
-        MainWindow.ClampWindowToWorkArea(this, 780, 640);
+        MainWindow.ClampWindowToWorkArea(this, 780, 690);
         ProjectTitleText.Text = session.Manifest.VietnameseTitle;
         UpdateFormatDescription();
     }
@@ -41,12 +41,22 @@ public partial class ProjectPublicationWindow : Window
 
     internal async Task LoadInspectionAsync()
     {
+        ProjectPublicationRange? range;
+        try { range = SelectedRange(); }
+        catch (Exception ex) when (ex is ArgumentException or OverflowException)
+        {
+            _inspection = null;
+            UpdateExportEnabled();
+            ShowError(ex);
+            return;
+        }
+        _inspection = null;
         SetBusy(true, "Đang kiểm tra các chương…");
         _operationCancellation = new();
         try
         {
             var progress = new Progress<ProjectPublicationProgress>(UpdateProgress);
-            _inspection = await _service.InspectAsync(_session, progress, _operationCancellation.Token);
+            _inspection = await _service.InspectAsync(_session, progress, _operationCancellation.Token, range);
             ChapterCountText.Text = _inspection.TotalChapterCount.ToString("N0");
             InspectionText.Text = _inspection.RequiresConfirmation
                 ? $"{_inspection.IncompleteChapterCount} chưa hoàn tất · {_inspection.InspectionChapterCount} cần kiểm tra"
@@ -63,6 +73,43 @@ public partial class ProjectPublicationWindow : Window
         catch (OperationCanceledException) { ProgressText.Text = "Đã hủy kiểm tra."; }
         catch (Exception ex) { ShowError(ex); }
         finally { _operationCancellation.Dispose(); _operationCancellation = null; SetBusy(false); }
+    }
+
+    private ProjectPublicationRange? SelectedRange()
+    {
+        static int? ReadNumber(string value, string label)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            if (!int.TryParse(value.Trim(), out int number) || number < 1)
+                throw new ArgumentException($"{label} phải là một số nguyên dương.");
+            return number;
+        }
+        int? start = ReadNumber(StartChapterInput.Text, "Từ chương");
+        int? end = ReadNumber(EndChapterInput.Text, "Đến chương");
+        if (start is null && end is null) return null;
+        var range = new ProjectPublicationRange(start, end);
+        range.Validate();
+        return range;
+    }
+
+    private void OnRangeChanged(object sender, TextChangedEventArgs e)
+    {
+        if (ExportButton is null || _busy) return;
+        _inspection = null;
+        ChapterCountText.Text = "—";
+        InspectionText.Text = "Chưa kiểm tra phạm vi";
+        IssueChaptersList.ItemsSource = null;
+        IssueChaptersPanel.Visibility = Visibility.Collapsed;
+        AllowIncompleteInput.IsChecked = false;
+        AllowIncompleteInput.Visibility = Visibility.Collapsed;
+        ProgressText.Text = "Phạm vi đã thay đổi. Bấm “Kiểm tra phạm vi” trước khi xuất.";
+        UpdateExportEnabled();
+    }
+
+    private async void OnCheckRange(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        await LoadInspectionAsync();
     }
 
     private async void OnIssueChapterDoubleClick(object sender, MouseButtonEventArgs e)
@@ -84,7 +131,10 @@ public partial class ProjectPublicationWindow : Window
             Filter = format == PublicationFormat.Pdf ? "Tài liệu PDF (*.pdf)|*.pdf" : "Văn bản UTF-8 (*.txt)|*.txt",
             DefaultExt = extension,
             AddExtension = true,
-            FileName = SanitizeFileName(_session.Manifest.VietnameseTitle) + extension
+            FileName = SanitizeFileName(_session.Manifest.VietnameseTitle) +
+                (_inspection.Range is { } chosen && (chosen.StartChapterNumber.HasValue || chosen.EndChapterNumber.HasValue)
+                    ? $"-chuong-{chosen.StartChapterNumber?.ToString() ?? "dau"}-{chosen.EndChapterNumber?.ToString() ?? "het"}" : "") +
+                extension
         };
         if (dialog.ShowDialog(this) != true) return;
 
@@ -134,6 +184,9 @@ public partial class ProjectPublicationWindow : Window
     {
         _busy = busy;
         FormatInput.IsEnabled = !busy;
+        StartChapterInput.IsEnabled = !busy;
+        EndChapterInput.IsEnabled = !busy;
+        CheckRangeButton.IsEnabled = !busy;
         IncludeProjectTitleInput.IsEnabled = !busy;
         IncludeChapterTitlesInput.IsEnabled = !busy;
         AllowIncompleteInput.IsEnabled = !busy;
