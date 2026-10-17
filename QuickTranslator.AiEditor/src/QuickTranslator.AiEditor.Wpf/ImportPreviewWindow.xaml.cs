@@ -133,6 +133,7 @@ public partial class ImportPreviewWindow : Window
         var projectIssues = new List<string>();
         IEnumerable<ImportPreviewItem> displayItems = plan.ChaptersInImportOrder
             .Concat(plan.Items.Where(item => !item.IsChapter).OrderBy(item => item.Span.StartUtf16));
+        HashSet<Guid> duplicateIds = plan.DuplicateEvidence.SelectMany(x => new[] { x.FirstItemId, x.SecondItemId }).ToHashSet();
         foreach (ImportPreviewItem item in displayItems)
         {
             string[] problems = plan.Issues.Where(x => x.ItemIds.Contains(item.Id)).Select(x => x.Message).ToArray();
@@ -149,6 +150,9 @@ public partial class ImportPreviewWindow : Window
             bool matchesFilter = filter switch
             {
                 "Problems" => problems.Length > 0,
+                "Duplicates" => duplicateIds.Contains(item.Id),
+                "Uncertain" => item.Decision == CandidateDecision.NeedsReview,
+                "MissingNumber" => item.IsChapter && item.Number is not > 0,
                 "Included" => item.Included,
                 "Unclassified" => item.Kind == PlannedRegionKind.Unclassified,
                 _ => true
@@ -170,6 +174,14 @@ public partial class ImportPreviewWindow : Window
         ImportCountText.Text = $"{newChapters:N0} chương";
         ProblemCountText.Text = $"{problemsCount:N0} mục";
         SourceSummaryText.Text = $"{plan.Source.EncodingName} · {plan.Source.Text.Length:N0} ký tự";
+        SourceCoverageSummary coverage = plan.CoverageAudit.Summary;
+        int trusted = plan.Chapters.Count(x => x.Decision == CandidateDecision.Accepted);
+        int review = plan.Chapters.Count(x => x.Decision == CandidateDecision.NeedsReview);
+        int duplicates = duplicateIds.Count;
+        int missing = plan.Chapters.Count(x => x.Number is not > 0);
+        int unknown = plan.Items.Count(x => x.Kind == PlannedRegionKind.Unclassified);
+        CoverageSummaryText.Text = $"Tin cậy {trusted:N0} · cần xem {review:N0} · trùng {duplicates:N0} · thiếu số {missing:N0} · vùng chưa phân loại {unknown:N0}\n" +
+            $"Ledger: nguồn {coverage.TotalUtf16:N0} · nội dung nhập {coverage.ImportedContentUtf16:N0} · heading {coverage.ImportedHeadingUtf16:N0} · metadata {coverage.MetadataUtf16:N0} · trùng xác minh {coverage.VerifiedDuplicateUtf16:N0} · loại rõ ràng {coverage.ExplicitlyExcludedUtf16:N0} · chưa giải quyết {coverage.UnresolvedUtf16:N0}.";
         UndoButton.IsEnabled = _editor.CanUndo;
         int failedTitles = _titleDraft?.Items.Count(item => item.Status == ChapterTitleTranslationStatus.Failed) ?? 0;
         int untranslatedCount = plan.ImportableChapters.Count(item => string.IsNullOrWhiteSpace(item.VietnameseTitle));
@@ -209,12 +221,16 @@ public partial class ImportPreviewWindow : Window
         NumberInput.Text = item.Number?.ToString() ?? "";
         TitleInput.Text = item.Title;
         NumberInput.IsEnabled = TitleInput.IsEnabled = IncludeButton.IsEnabled = item.IsChapter;
+        ConfirmBoundaryButton.IsEnabled = item.IsChapter && item.Decision != CandidateDecision.Accepted;
+        RejectBoundaryButton.IsEnabled = item.IsChapter && _editor.Current.Items.IndexOf(item) > 0;
         IncludeButton.Content = item.Included ? "Loại khỏi import" : "Đưa vào import";
         StartContextText.Text = Context(item.Span.StartUtf16, "⟦ BẮT ĐẦU ⟧");
         EndContextText.Text = Context(item.Span.EndUtf16, "⟦ KẾT THÚC ⟧");
+        string[] duplicateDetails = _editor.Current.DuplicateEvidence.Where(x => x.FirstItemId == item.Id || x.SecondItemId == item.Id)
+            .Select(x => $"{x.Kind}: {x.Reason}").ToArray();
         SelectedDetailText.Text = item.Kind == PlannedRegionKind.Unclassified
             ? "Vùng này được giữ trong bản nguồn nhưng không nhập thành chương."
-            : row.Problems.Length == 0 ? "Ranh giới chương đã sẵn sàng." : string.Join("\n", row.Problems);
+            : string.Join("\n", row.Problems.Concat(duplicateDetails).DefaultIfEmpty("Ranh giới chương đã sẵn sàng."));
     }
 
     private string Context(int boundary, string marker)
@@ -242,6 +258,20 @@ public partial class ImportPreviewWindow : Window
         if (!TrySelectedChapter(out PreviewRow? row)) return;
         ImportPreviewItem item = _editor!.Current.Items.Single(x => x.Id == row.Id);
         try { _editor.SetIncluded(row.Id, !item.Included); RefreshRows(row.Id); }
+        catch (Exception ex) { ShowError(ex.Message); }
+    }
+
+    private void OnConfirmBoundary(object sender, RoutedEventArgs e)
+    {
+        if (!TrySelectedChapter(out PreviewRow? row)) return;
+        try { _editor!.ConfirmBoundary(row.Id); RefreshRows(row.Id); }
+        catch (Exception ex) { ShowError(ex.Message); }
+    }
+
+    private void OnRejectFalseBoundary(object sender, RoutedEventArgs e)
+    {
+        if (!TrySelectedChapter(out PreviewRow? row)) return;
+        try { _editor!.RejectFalseBoundary(row.Id); InvalidateTitleDraft(); RefreshRows(); }
         catch (Exception ex) { ShowError(ex.Message); }
     }
 

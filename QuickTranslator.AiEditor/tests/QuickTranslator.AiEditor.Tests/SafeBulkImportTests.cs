@@ -28,6 +28,10 @@ public sealed class SafeBulkImportTests : IDisposable
             new BulkImportOptions(MaxChaptersPerChunk: 500, MaxUtf8BytesPerChunk: 4 * 1024 * 1024));
 
         Assert.True(report.Completed);
+        Assert.True(report.PostCommitVerified);
+        Assert.True(report.VerifiedComplete);
+        Assert.False(report.PartialImport);
+        Assert.Equal(plan.Fingerprint, report.PlanFingerprint);
         Assert.Equal(count, report.ImportedCount);
         Assert.True(File.Exists(report.SourceArchivePath));
         Assert.Equal(plan.Source.RawSha256, report.SourceRawSha256);
@@ -208,16 +212,25 @@ public sealed class SafeBulkImportTests : IDisposable
     }
 
     [Fact]
-    public async Task Unordered_source_imports_in_numeric_order_and_keeps_the_first_duplicate()
+    public async Task Unordered_source_blocks_different_duplicate_until_explicit_partial_import_decision()
     {
         var repository = new ProjectRepository();
         ProjectSession session = await repository.CreateAsync(Path.Combine(_root, "unordered"), "Synthetic unordered");
         const string source = "第4章 四\n正文四。\n第2章 二（前）\n正文二前。\n第3章 三\n正文三。\n第2章 二（后）\n正文二后。\n第1章 一\n正文一。";
-        ImportPreviewPlan plan = ImportPreviewEditor.Create(new ChapterDetector().Detect(source, "unordered.txt")).Current;
+        var editor = ImportPreviewEditor.Create(new ChapterDetector().Detect(source, "unordered.txt"));
+        ImportPreviewPlan unresolved = editor.Current;
 
+        await Assert.ThrowsAsync<BulkImportValidationException>(() =>
+            new SafeBulkImportService(repository).ImportAsync(session, unresolved, Defaults()));
+        Assert.Empty(session.Manifest.Chapters);
+        editor.SetIncluded(editor.Current.Chapters.Last(x => x.Number == 2).Id, false);
+        ImportPreviewPlan plan = editor.Current;
         BulkImportReport report = await new SafeBulkImportService(repository).ImportAsync(session, plan, Defaults());
 
         Assert.True(report.Completed);
+        Assert.True(report.PostCommitVerified);
+        Assert.True(report.PartialImport);
+        Assert.False(report.VerifiedComplete);
         Assert.Equal([1, 2, 3, 4], report.Chapters.Select(chapter => chapter.Number));
         Assert.Equal([1, 2, 3, 4], session.Manifest.Chapters.Select(chapter => chapter.Number));
         ProjectChapterEntry chapterTwo = session.Manifest.Chapters.Single(chapter => chapter.Number == 2);
@@ -226,6 +239,37 @@ public sealed class SafeBulkImportTests : IDisposable
         Assert.Contains("正文二前。", loaded.OriginalText, StringComparison.Ordinal);
         Assert.DoesNotContain("正文二后。", loaded.OriginalText, StringComparison.Ordinal);
         Assert.Equal(source, plan.ReconstructSource());
+    }
+
+    [Fact]
+    public async Task Postcommit_verification_failure_never_reports_complete_and_retry_reverifies_idempotently()
+    {
+        var repository = new ProjectRepository();
+        ProjectSession session = await repository.CreateAsync(Path.Combine(_root, "postverify"), "Synthetic postverify");
+        ImportPreviewPlan plan = Plan(3);
+        var service = new SafeBulkImportService(repository)
+        {
+            VerificationFaultPoint = point =>
+            {
+                if (point == "BeforePostCommitVerify") throw new IOException("Injected verification read failure.");
+            }
+        };
+
+        BulkImportReport first = await service.ImportAsync(session, plan, Defaults());
+
+        Assert.False(first.Completed);
+        Assert.False(first.PostCommitVerified);
+        Assert.Contains("verification", first.Error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, (await new ProjectRepository().OpenAsync(session.ManifestPath)).Session.Manifest.ChapterCount);
+
+        var retryRepository = new ProjectRepository();
+        ProjectSession reopened = (await retryRepository.OpenAsync(session.ManifestPath)).Session;
+        BulkImportReport retry = await new SafeBulkImportService(retryRepository)
+            .ImportAsync(reopened, plan, Defaults());
+        Assert.True(retry.Completed);
+        Assert.True(retry.PostCommitVerified);
+        Assert.True(retry.VerifiedComplete);
+        Assert.Equal(3, retry.AlreadyImportedCount);
     }
 
     [Fact]

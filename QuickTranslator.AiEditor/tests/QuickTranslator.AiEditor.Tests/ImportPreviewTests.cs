@@ -74,23 +74,23 @@ public sealed class ImportPreviewTests
     }
 
     [Fact]
-    public void Unordered_chapters_are_planned_by_number_and_later_duplicates_are_skipped_automatically()
+    public void Different_text_under_the_same_chapter_number_must_never_be_silently_dropped()
     {
         const string source = "第4章 四\n正文四。\n第2章 二（前）\n正文二前。\n第3章 三\n正文三。\n第2章 二（后）\n正文二后。\n第1章 一\n正文一。";
-
-        ImportPreviewPlan plan = ImportPreviewEditor.Create(new ChapterDetector().Detect(source, "unordered.txt")).Current;
-
-        Assert.Equal([1, 2, 3, 4], plan.ImportableChapters.Select(chapter => chapter.Number));
-        ImportPreviewItem[] duplicateTwos = plan.Chapters.Where(chapter => chapter.Number == 2)
-            .OrderBy(chapter => chapter.Span.StartUtf16).ToArray();
-        Assert.True(duplicateTwos[0].Included);
-        Assert.False(duplicateTwos[1].Included);
-        Assert.False(plan.HasBlockingIssues);
+        var editor = ImportPreviewEditor.Create(new ChapterDetector().Detect(source, "unordered.txt"));
+        ImportPreviewPlan plan = editor.Current;
+        Assert.Equal(5, plan.ImportableChapters.Count());
+        Assert.Equal(2, plan.Chapters.Count(x => x.Number == 2 && x.Included));
+        Assert.True(plan.HasBlockingIssues);
+        Assert.Equal(0, plan.AutomaticallySkippedDuplicateCount);
         Assert.Contains(plan.Issues, issue => issue.Code == ImportPreviewIssueCode.DuplicateNumber &&
-            issue.Severity == DetectionIssueSeverity.Information);
-        Assert.DoesNotContain(plan.Issues, issue => issue.Code == ImportPreviewIssueCode.ReversedNumber &&
-            issue.Severity != DetectionIssueSeverity.Information);
+            issue.Severity == DetectionIssueSeverity.Error);
         AssertExact(source, plan);
+        ImportPreviewItem second = plan.Chapters.Where(x => x.Number == 2).OrderBy(x => x.Span.StartUtf16).Last();
+        editor.SetIncluded(second.Id, false);
+        Assert.False(editor.Current.HasBlockingIssues);
+        Assert.Contains(editor.Current.Issues, issue => issue.Code == ImportPreviewIssueCode.ExcludedDifferentContent);
+        AssertExact(source, editor.Current);
     }
 
     [Fact]

@@ -11,6 +11,10 @@ try
     var stopwatch = Stopwatch.StartNew();
     ImmutableImportPlan plan = new ChapterDetector().Detect(source);
     stopwatch.Stop();
+    double detectionMilliseconds = stopwatch.Elapsed.TotalMilliseconds;
+    stopwatch.Restart();
+    ImportPreviewPlan preview = ImportPreviewEditor.Create(plan).Current;
+    stopwatch.Stop();
     bool exact = plan.ReconstructSource() == source.Text;
     var report = new
     {
@@ -30,7 +34,10 @@ try
         UnclassifiedRegions = plan.Regions.Count(x => x.Kind == PlannedRegionKind.Unclassified),
         Issues = plan.Issues.GroupBy(x => x.Code).ToDictionary(x => x.Key.ToString(), x => x.Count()),
         ExactRoundTrip = exact,
-        ElapsedMilliseconds = stopwatch.Elapsed.TotalMilliseconds,
+        DetectionMilliseconds = detectionMilliseconds,
+        ReconstructionAndCoverageMilliseconds = stopwatch.Elapsed.TotalMilliseconds,
+        DuplicatePairs = preview.DuplicateEvidence.Length,
+        Coverage = preview.CoverageAudit.Summary,
         Samples = plan.Candidates.Where(x => x.Decision != CandidateDecision.Rejected).Take(10).Select(x => new
         {
             x.LineNumber, x.RawHeading, Kind = x.Kind.ToString(), x.Number, x.Title, x.Confidence,
@@ -57,17 +64,20 @@ static async Task<(RawSourceSnapshot Source, string Mode)> LoadSourceAsync(strin
     if (arguments.Length == 0 || arguments[0].Equals("--synthetic", StringComparison.OrdinalIgnoreCase))
     {
         int count = arguments.Length > 1 && int.TryParse(arguments[1], out int parsed) ? parsed : 5_000;
+        int bodyChars = arguments.Length > 2 && int.TryParse(arguments[2], out int parsedBody) ? parsedBody : 32;
         if (count is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(arguments), "Số chapter synthetic phải từ 1 đến 100.000.");
-        var text = new StringBuilder(count * 40);
+        if (bodyChars is < 1 or > 100_000) throw new ArgumentOutOfRangeException(nameof(arguments), "Độ dài body phải từ 1 đến 100.000 UTF-16.");
+        var text = new StringBuilder(checked(count * (bodyChars + 40)));
+        string body = new('中', bodyChars);
         int volume = 0;
         for (int index = 0; index < count; index++)
         {
             int chapter = index % 1_000 + 1;
             if (chapter == 1) text.Append("第").Append(++volume).Append("卷 合成卷").Append("\r\n");
             text.Append("第").Append(chapter).Append("章 合成标题").Append(index + 1).Append("\r\n")
-                .Append("这是用于检测的合成正文，不会写入任何 Project。😀").Append("\r\n");
+                .Append(body).Append("😀").Append("\r\n");
         }
-        return (RawSourceReader.FromText(text.ToString(), $"synthetic-{count}.txt"), $"synthetic:{count}");
+        return (RawSourceReader.FromText(text.ToString(), $"synthetic-{count}-{bodyChars}.txt"), $"synthetic:{count}:{bodyChars}");
     }
 
     string path = arguments[0];
@@ -75,13 +85,15 @@ static async Task<(RawSourceSnapshot Source, string Mode)> LoadSourceAsync(strin
     for (int index = 1; index < arguments.Length; index++)
     {
         if (!arguments[index].Equals("--encoding", StringComparison.OrdinalIgnoreCase) || index + 1 >= arguments.Length)
-            throw new ArgumentException("Cú pháp: QTStudio.ChapterDetector.Demo.exe <file> [--encoding utf8|gbk|gb18030]");
+            throw new ArgumentException("Cú pháp: QTStudio.ChapterDetector.Demo.exe <file> [--encoding utf8|gbk|gb18030|utf16le|utf16be]");
         encoding = arguments[++index].ToLowerInvariant() switch
         {
             "utf8" or "utf-8" => SourceTextEncoding.Utf8,
             "gbk" => SourceTextEncoding.Gbk,
             "gb18030" => SourceTextEncoding.Gb18030,
-            _ => throw new ArgumentException("Encoding phải là utf8, gbk hoặc gb18030.")
+            "utf16le" or "utf-16le" => SourceTextEncoding.Utf16Le,
+            "utf16be" or "utf-16be" => SourceTextEncoding.Utf16Be,
+            _ => throw new ArgumentException("Encoding phải là utf8, gbk, gb18030, utf16le hoặc utf16be.")
         };
     }
     return (await RawSourceReader.ReadFileAsync(path, encoding), $"file:{Path.GetFullPath(path)}");

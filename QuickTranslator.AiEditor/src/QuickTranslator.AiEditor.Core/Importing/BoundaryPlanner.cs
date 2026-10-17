@@ -23,6 +23,7 @@ internal static class BoundaryPlanner
                 new(0, firstStart), null, null, "", null));
 
         string? currentVolume = null;
+        string? currentVolumeIdentity = null;
         for (int position = 0; position < included.Length; position++)
         {
             int candidateIndex = included[position];
@@ -41,9 +42,13 @@ internal static class BoundaryPlanner
                 _ => throw new ArgumentOutOfRangeException()
             };
             if (kind == PlannedRegionKind.Volume)
+            {
                 currentVolume = string.IsNullOrWhiteSpace(candidate.Title) ? candidate.RawHeading.Trim() : candidate.Title;
+                currentVolumeIdentity = $"volume:{candidate.HeadingSpan.StartUtf16}:{candidate.Number?.ToString() ?? "-"}";
+            }
             regions.Add(new(kind, new(start, end - start), candidate.HeadingSpan,
-                new(bodyStart, end - bodyStart), candidateIndex, candidate.Number, candidate.Title, currentVolume));
+                new(bodyStart, end - bodyStart), candidateIndex, candidate.Number, candidate.Title, currentVolume)
+            { VolumeIdentity = currentVolumeIdentity });
         }
         return regions.ToImmutable();
     }

@@ -81,6 +81,23 @@ public sealed class ChapterDetectionSafetyTests
         Assert.Equal(bytes, source.OriginalBytes);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Auto_detects_utf16_bom_without_replacement_and_preserves_raw_bytes(bool bigEndian)
+    {
+        const string text = "第一章 标题\r\n正文😀。";
+        var encoding = new UnicodeEncoding(bigEndian, true, true);
+        byte[] bytes = [.. encoding.GetPreamble(), .. encoding.GetBytes(text)];
+
+        RawSourceSnapshot source = RawSourceReader.Decode(bytes);
+
+        Assert.Equal(text, source.Text);
+        Assert.Equal(bytes, source.OriginalBytes);
+        Assert.Contains(bigEndian ? "BE" : "LE", source.EncodingName, StringComparison.Ordinal);
+        Assert.Equal(text, new ChapterDetector().Detect(source).ReconstructSource());
+    }
+
     [Fact]
     public void Auto_detects_legacy_chinese_without_replacement_and_keeps_raw_bytes()
     {

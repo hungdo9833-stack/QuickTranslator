@@ -105,6 +105,12 @@ public sealed class ImportPreviewUiTests
             Assert.NotNull(window.FindName("TranslateAllTitlesButton"));
             Assert.NotNull(window.FindName("RetryFailedTitlesButton"));
             Assert.NotNull(window.FindName("RetrySelectedTitlesButton"));
+            Assert.NotNull(window.FindName("ConfirmBoundaryButton"));
+            Assert.NotNull(window.FindName("RejectBoundaryButton"));
+            Assert.Contains("Ledger:", ((TextBlock)window.FindName("CoverageSummaryText")).Text,
+                StringComparison.Ordinal);
+            Assert.Contains("chưa giải quyết", ((TextBlock)window.FindName("CoverageSummaryText")).Text,
+                StringComparison.CurrentCultureIgnoreCase);
             Assert.Contains("Số 1", ((TextBlock)window.FindName("FooterHintText")).Text +
                 string.Join(" ", ((ListBox)window.FindName("IssuesList")).Items.Cast<object>()), StringComparison.OrdinalIgnoreCase);
             Assert.Equal(System.Windows.Media.Color.FromRgb(7, 17, 31),
@@ -125,6 +131,8 @@ public sealed class ImportPreviewUiTests
         BulkImportReport report = await task;
 
         Assert.True(report.Completed);
+        Assert.True(report.PostCommitVerified);
+        Assert.True(report.VerifiedComplete);
         Assert.Equal(50, report.ImportedCount);
         ProjectSession reopened = (await new ProjectRepository().OpenAsync(fixture.Project.ManifestPath)).Session;
         Assert.Equal(50, reopened.Manifest.ChapterCount);
@@ -162,6 +170,9 @@ public sealed class ImportPreviewUiTests
             BulkImportReport report = await (Task<BulkImportReport>)fixture.Call(
                 "ImportDetectedPlanAsync", window.CurrentPlan, null, CancellationToken.None)!;
             Assert.True(report.Completed);
+            Assert.True(report.PostCommitVerified);
+            Assert.True(report.PartialImport);
+            Assert.False(report.VerifiedComplete);
             Assert.Equal(200, report.ImportedCount);
 
             ProjectSession reopened = (await new ProjectRepository().OpenAsync(fixture.Project.ManifestPath)).Session;
@@ -196,7 +207,7 @@ public sealed class ImportPreviewUiTests
     });
 
     [Fact]
-    public Task Preview_displays_unordered_chapters_by_number_and_reports_automatic_duplicate_resolution() => StaHost.Run(async () =>
+    public Task Preview_blocks_unreviewed_same_number_chapters() => StaHost.Run(async () =>
     {
         using var fixture = new WorkspaceFixture();
         await fixture.CreateProjectAsync();
@@ -208,12 +219,10 @@ public sealed class ImportPreviewUiTests
         {
             await window.LoadSourceAsync(path, SourceTextEncoding.Auto);
 
-            Assert.Equal([1, 2, 3], window.CurrentPlan!.ImportableChapters.Select(chapter => chapter.Number));
-            Assert.Equal(1, window.CurrentPlan.AutomaticallySkippedDuplicateCount);
-            Assert.True(((Button)window.FindName("ConfirmButton")).IsEnabled);
+            Assert.Equal([1, 1, 2, 3], window.CurrentPlan!.ImportableChapters.Select(chapter => chapter.Number));
+            Assert.Equal(0, window.CurrentPlan.AutomaticallySkippedDuplicateCount);
+            Assert.False(((Button)window.FindName("ConfirmButton")).IsEnabled);
             Assert.Contains("tự sắp xếp", ((TextBlock)window.FindName("PreviewStatusText")).Text,
-                StringComparison.CurrentCultureIgnoreCase);
-            Assert.Contains("bỏ qua 1 bản trùng", ((TextBlock)window.FindName("PreviewStatusText")).Text,
                 StringComparison.CurrentCultureIgnoreCase);
 
             var grid = (DataGrid)window.FindName("PreviewGrid");

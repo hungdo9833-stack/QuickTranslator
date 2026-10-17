@@ -27,8 +27,10 @@ public static class RawSourceReader
     {
         byte[] original = bytes.ToArray();
         bool hasUtf8Bom = original.Length >= 3 && original[0] == 0xef && original[1] == 0xbb && original[2] == 0xbf;
+        bool hasUtf16LeBom = original.Length >= 2 && original[0] == 0xff && original[1] == 0xfe;
+        bool hasUtf16BeBom = original.Length >= 2 && original[0] == 0xfe && original[1] == 0xff;
         if (encoding == SourceTextEncoding.Auto)
-            return DecodeAutomatically(original, sourceName, hasUtf8Bom);
+            return DecodeAutomatically(original, sourceName, hasUtf8Bom, hasUtf16LeBom, hasUtf16BeBom);
         Encoding decoder;
         int preambleLength = 0;
         string encodingName;
@@ -48,6 +50,16 @@ public static class RawSourceReader
                 decoder = StrictCodePage(54936);
                 encodingName = "GB18030";
                 break;
+            case SourceTextEncoding.Utf16Le:
+                decoder = new UnicodeEncoding(false, false, true);
+                preambleLength = hasUtf16LeBom ? 2 : 0;
+                encodingName = "UTF-16 LE";
+                break;
+            case SourceTextEncoding.Utf16Be:
+                decoder = new UnicodeEncoding(true, false, true);
+                preambleLength = hasUtf16BeBom ? 2 : 0;
+                encodingName = "UTF-16 BE";
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(encoding));
         }
@@ -63,8 +75,24 @@ public static class RawSourceReader
         }
     }
 
-    private static RawSourceSnapshot DecodeAutomatically(byte[] original, string sourceName, bool hasUtf8Bom)
+    private static RawSourceSnapshot DecodeAutomatically(byte[] original, string sourceName, bool hasUtf8Bom,
+        bool hasUtf16LeBom, bool hasUtf16BeBom)
     {
+        if (hasUtf16LeBom || hasUtf16BeBom)
+        {
+            Encoding decoder = new UnicodeEncoding(hasUtf16BeBom, false, true);
+            try
+            {
+                string utf16 = decoder.GetString(original, 2, original.Length - 2);
+                return Create(sourceName, utf16, original, hasUtf16BeBom ? "UTF-16 BE BOM" : "UTF-16 LE BOM",
+                    autoDetected: true, uncertain: false,
+                    alternatives: [hasUtf16BeBom ? "UTF-16 BE" : "UTF-16 LE"]);
+            }
+            catch (DecoderFallbackException ex)
+            {
+                throw new SourceDecodingException("Dữ liệu có BOM UTF-16 nhưng chứa chuỗi mã không hợp lệ.", ex);
+            }
+        }
         try
         {
             int preamble = hasUtf8Bom ? 3 : 0;

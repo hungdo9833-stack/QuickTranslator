@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 
 namespace QuickTranslator.AiEditor.Core.Importing;
 
-public enum SourceTextEncoding { Auto, Utf8, Gbk, Gb18030 }
+public enum SourceTextEncoding { Auto, Utf8, Gbk, Gb18030, Utf16Le, Utf16Be }
 public enum SourceNewLineStyle { None, Lf, CrLf, Cr, Mixed }
 public enum ChapterHeadingKind { Chapter, Volume, SpecialChapter }
 public enum CandidateDecision { Accepted, NeedsReview, Rejected }
@@ -15,9 +15,13 @@ public enum DetectionIssueCode
     ReversedChapterNumber,
     NumberJump,
     AmbiguousHeading,
-    UnclassifiedSource
+    UnclassifiedSource,
+    RejectedHeadingInBody,
+    SuspiciousLongChapter,
+    AggregateChapterGroup
 }
 public enum PlannedRegionKind { Unclassified, Chapter, Volume, SpecialChapter }
+public enum SourceStructureKind { WorkTitle, Volume, TableOfContents, AggregatePost, Chapter, Metadata, Unclassified }
 
 public readonly record struct SourceSpan(int StartUtf16, int LengthUtf16)
 {
@@ -60,6 +64,20 @@ public sealed record HeadingCandidate(
     string Recognizer,
     double Confidence,
     CandidateDecision Decision,
+    ImmutableArray<CandidateEvidence> Evidence)
+{
+    public int? VolumeNumber => Kind == ChapterHeadingKind.Volume ? Number : null;
+    public int? ChapterNumber => Kind == ChapterHeadingKind.Volume ? null : Number;
+}
+
+public sealed record SourceStructureRegion(
+    SourceStructureKind Kind,
+    SourceSpan Span,
+    int? CandidateIndex,
+    int? VolumeNumber,
+    int? ChapterNumber,
+    string Label,
+    double Confidence,
     ImmutableArray<CandidateEvidence> Evidence);
 
 public sealed record DetectionIssue(
@@ -77,15 +95,19 @@ public sealed record PlannedSourceRegion(
     int? CandidateIndex,
     int? ChapterNumber,
     string Title,
-    string? VolumeTitle);
+    string? VolumeTitle)
+{
+    public string? VolumeIdentity { get; init; }
+}
 
 public sealed class ImmutableImportPlan
 {
     public ImmutableImportPlan(RawSourceSnapshot source, ImmutableArray<SourceLine> lines,
         ImmutableArray<HeadingCandidate> candidates, ImmutableArray<PlannedSourceRegion> regions,
-        ImmutableArray<DetectionIssue> issues)
+        ImmutableArray<DetectionIssue> issues, ImmutableArray<SourceStructureRegion> structure = default)
     {
         Source = source; Lines = lines; Candidates = candidates; Regions = regions; Issues = issues;
+        Structure = structure.IsDefault ? [] : structure;
     }
 
     public RawSourceSnapshot Source { get; }
@@ -93,6 +115,7 @@ public sealed class ImmutableImportPlan
     public ImmutableArray<HeadingCandidate> Candidates { get; }
     public ImmutableArray<PlannedSourceRegion> Regions { get; }
     public ImmutableArray<DetectionIssue> Issues { get; }
+    public ImmutableArray<SourceStructureRegion> Structure { get; }
     public IEnumerable<PlannedSourceRegion> Chapters => Regions.Where(x => x.Kind is PlannedRegionKind.Chapter or PlannedRegionKind.SpecialChapter);
     public string Slice(SourceSpan span) => Source.Text.Substring(span.StartUtf16, span.LengthUtf16);
     public string ReconstructSource() => string.Concat(Regions.Select(x => Slice(x.Span)));
