@@ -152,6 +152,47 @@ public sealed class CharacterDossierReviewTests
     }
 
     [Fact]
+    public void Dossier_form_prefills_consensus_from_partial_batches_and_blanks_real_conflicts()
+    {
+        Guid project = Guid.NewGuid();
+        var state = new BookIntelligenceState { ProjectId = project };
+        state.CandidateIdentities.AddRange(
+        [
+            new CandidateIdentity { ChineseName = "林哲" },
+            new CandidateIdentity { ChineseName = "苏雨" }
+        ]);
+        var a = new IntelligenceRelationshipSuggestion
+        {
+            SpeakerChineseName = "林哲", ListenerChineseName = "苏雨",
+            Relationship = "spouse", SelfReference = "我", AddresseeReference = "老婆",
+            ValidFromChapter = 300, EvidenceIds = [Guid.NewGuid()]
+        };
+        var b = new IntelligenceRelationshipSuggestion
+        {
+            SpeakerChineseName = "苏雨", ListenerChineseName = "林哲",
+            Relationship = "married", ReverseSelfReference = "anh",
+            ReverseAddresseeReference = "vợ",
+            EvidenceIds = [Guid.NewGuid()]
+        };
+        state.Relationships.AddRange([a, b]);
+        var result = CharacterDossierReviewService.Build(state, Resources(project));
+        var related = Assert.Single(result.Single(x => x.ChineseName == "林哲").Relations);
+        Assert.Equal("anh", related.ConsensusAddressing(a, 0)); // 我 discarded; batch 2 offers 'anh'
+        Assert.Equal("vợ", related.ConsensusAddressing(a, 1)); // 老婆 converted
+        Assert.Equal(300, related.ConsensusChapter(x => x.ValidFromChapter));
+        Assert.False(related.HasConflictingAddressing);
+        Assert.False(related.HasConflictingTimeline);
+
+        b.ReverseSelfReference = "ta"; // candidate context-dependent: ignored
+        Assert.Equal("", related.ConsensusAddressing(a, 0));
+        b.ReverseSelfReference = "em"; // two incompatible, explicit Vietnamese self references
+        a.SelfReference = "anh";
+        Assert.Equal("", related.ConsensusAddressing(a, 0));
+        Assert.True(CharacterDossierReviewService.Build(state, Resources(project))
+            .Single(x => x.ChineseName == "林哲").Relations[0].HasConflictingAddressing);
+    }
+
+    [Fact]
     public void Conflicting_timeline_is_grouped_without_erasing_historical_claims()
     {
         Guid id = Guid.NewGuid();
