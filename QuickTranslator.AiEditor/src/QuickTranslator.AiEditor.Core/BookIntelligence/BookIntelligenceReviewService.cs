@@ -129,19 +129,37 @@ public sealed class BookIntelligenceReviewService(ProjectSession session)
                 "Đây là sự kiện/cảm xúc chưa xác nhận, không phải quan hệ ổn định. Hãy đối chiếu nguyên tác và sửa quan hệ trước khi duyệt.");
         await EnsureEvidenceCurrentAsync(state, suggestion.EvidenceIds, cancellationToken).ConfigureAwait(false);
         ProjectResources resources = await LoadExpectedAsync(expectedResourceRevision, cancellationToken).ConfigureAwait(false);
-        KnowledgeRelationship? knowledge = suggestion.KnowledgeRelationshipId is Guid knowledgeId
-            ? state.RelationshipGraph.SingleOrDefault(x => x.Id == knowledgeId) : null;
-        if (knowledge is not null)
+        RelationshipLabelNormalizer.Result parsed = RelationshipLabelNormalizer.Normalize(suggestion.Relationship);
+        if (parsed.Classification == RelationshipLabelNormalizer.Kind.Stable &&
+            RelationshipIntelligenceQualityGate.RequiresDirection(parsed.RelationType) &&
+            suggestion.ConfirmedDirection == RelationshipIntelligenceQualityGate.Direction.Unverified)
+            throw new InvalidOperationException(
+                "Phải xác nhận ai giữ vai trò cha/mẹ, con, thầy/trò hoặc cấp trên trước khi duyệt quan hệ. " +
+                "Thứ tự người nói/người nghe do AI trả về không phải chiều quan hệ.");
+
+        KnowledgeRelationship? knowledge = null;
+        if (parsed.Classification == RelationshipLabelNormalizer.Kind.Stable)
         {
-            suggestion.ValidFromChapter ??= knowledge.ValidFromChapter;
-            suggestion.ValidToChapter ??= knowledge.ValidToChapter;
-            suggestion.RevealedAtChapter ??= knowledge.RevealedAtChapter;
-            knowledge.Status = KnowledgeRelationshipStatus.Confirmed;
-            knowledge.ValidFromChapter = suggestion.ValidFromChapter;
-            knowledge.ValidToChapter = suggestion.ValidToChapter;
-            knowledge.RevealedAtChapter = suggestion.RevealedAtChapter;
+            // Stage 2: only a human-approved canonical relation may enter the
+            // trusted graph. Reverse if the second named person holds the role.
+            knowledge = RelationshipKnowledgeService.AddOrAggregateDirect(
+                state, resources, suggestion,
+                reverseDirection: suggestion.ConfirmedDirection ==
+                    RelationshipIntelligenceQualityGate.Direction.ListenerHasRole);
+            if (knowledge is not null)
+            {
+                suggestion.ValidFromChapter ??= knowledge.ValidFromChapter;
+                suggestion.ValidToChapter ??= knowledge.ValidToChapter;
+                suggestion.RevealedAtChapter ??= knowledge.RevealedAtChapter;
+                knowledge.Status = KnowledgeRelationshipStatus.Confirmed;
+                knowledge.DiscoveryMethod = RelationshipDiscoveryMethod.UserConfirmed;
+                knowledge.ValidFromChapter = suggestion.ValidFromChapter;
+                knowledge.ValidToChapter = suggestion.ValidToChapter;
+                knowledge.RevealedAtChapter = suggestion.RevealedAtChapter;
+            }
         }
-        if (string.IsNullOrWhiteSpace(suggestion.SelfReference) || string.IsNullOrWhiteSpace(suggestion.AddresseeReference))
+        if (!RelationshipIntelligenceQualityGate.MayInstallAddressing(
+            suggestion.SelfReference, suggestion.AddresseeReference))
         {
             suggestion.Status = IntelligenceReviewStatus.Accepted;
             state = await _state.SaveAsync(state, cancellationToken).ConfigureAwait(false);
@@ -167,8 +185,8 @@ public sealed class BookIntelligenceReviewService(ProjectSession session)
             AddresseeReference = suggestion.AddresseeReference, Enabled = true, Locked = false,
             AddressingNotes = "Đã xác nhận từ AI Book Intelligence: " + suggestion.Reason
         });
-        if (!string.IsNullOrWhiteSpace(suggestion.ReverseSelfReference) &&
-            !string.IsNullOrWhiteSpace(suggestion.ReverseAddresseeReference))
+        if (RelationshipIntelligenceQualityGate.MayInstallAddressing(
+            suggestion.ReverseSelfReference, suggestion.ReverseAddresseeReference))
         {
             CharacterRelationship? reverse = listener.Relationships.SingleOrDefault(x => x.EffectiveListenerCharacterId == speaker.Id);
             if (reverse is not null)
