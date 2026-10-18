@@ -106,10 +106,20 @@ public static class RelationshipIntelligenceQualityGate
         item.Reason = AppendNote(item.Reason, "Quality Gate: " + check.Message);
     }
 
-    public static bool MayInstallAddressing(string self, string call) =>
-        !string.IsNullOrWhiteSpace(self) && !string.IsNullOrWhiteSpace(call) &&
-        string.Equals(self.Trim(), SafeAddressingDraft(self), StringComparison.Ordinal) &&
-        string.Equals(call.Trim(), SafeAddressingDraft(call), StringComparison.Ordinal);
+    // Unlike unverified AI drafts, explicit human-reviewed Vietnamese self
+    // references such as "tôi" or "ta" are valid in the right dialogue context.
+    public static bool MayInstallAddressing(string self, string call)
+    {
+        static bool IsVietnameseAddressing(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) ||
+                value.Any(c => c >= '\u3400' && c <= '\u9fff')) return false;
+            string folded = value.Trim().ToLowerInvariant();
+            return folded is not ("boyfriend" or "girlfriend" or "male friend" or
+                "female friend" or "wife" or "husband" or "me" or "you");
+        }
+        return IsVietnameseAddressing(self) && IsVietnameseAddressing(call);
+    }
 
     private static string AppendNote(string reason, string note) =>
         reason.Contains(note, StringComparison.Ordinal) ? reason : reason + "\n" + note;
