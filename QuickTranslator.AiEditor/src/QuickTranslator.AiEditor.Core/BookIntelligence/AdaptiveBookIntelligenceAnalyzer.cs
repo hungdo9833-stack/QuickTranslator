@@ -13,7 +13,7 @@ namespace QuickTranslator.AiEditor.Core.BookIntelligence;
 public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
 {
     public const int MaximumEvidencePerRequest = 8;
-    public const string PromptSchemaVersion = "abi-2-json-2-relations";
+    public const string PromptSchemaVersion = "abi-3-evidence-quality";
     internal static JsonElement ResponseSchema { get; } = JsonSerializer.Deserialize<JsonElement>("""
         {
           "type":"object",
@@ -78,7 +78,7 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
                     : TakeBatch(remaining.ToArray(), options.ContextSize);
                 var batchIds = batch.Select(x => x.Id).ToHashSet();
                 remaining.RemoveAll(x => batchIds.Contains(x.Id));
-                string relevantContext = RelevantContextFingerprint(batch, resources);
+                string relevantContext = RelevantContextFingerprint(batch, resources, state);
                 string cacheModel = client is IAdaptiveSurveyBatchClient pool
                     ? pool.CacheSignature : options.Model;
                 string key = AnalysisKey(batch, cacheModel, PromptSchemaVersion, relevantContext);
@@ -93,7 +93,7 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
                     continue;
                 }
                 if (!scheduledKeys.Add(key)) continue;
-                work.Add(new(batch, key, BuildPrompt(batch, resources)));
+                work.Add(new(batch, key, BuildPrompt(batch, resources, state)));
             }
             if (work.Count == 0) continue;
 
@@ -280,12 +280,22 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
             }
     }
 
-    internal static string BuildPrompt(IReadOnlyCollection<CorpusEvidence> evidence, ProjectResources resources)
+    internal static string BuildPrompt(IReadOnlyCollection<CorpusEvidence> evidence, ProjectResources resources,
+        BookIntelligenceState? state = null)
     {
         string combined = string.Join('\n', evidence.Select(x => x.Excerpt));
         string knownCharacters = string.Join('\n', resources.Characters.Profiles.Where(p =>
                 combined.Contains(p.ChineseName, StringComparison.Ordinal) || p.Aliases.Any(combined.Contains))
             .Select(p => $"- {p.ChineseName} = {p.VietnameseName}; aliases=[{string.Join(", ", p.Aliases)}]; gender={p.Gender}"));
+        // Stage 1 / Character Intelligence: keep names from earlier AI batches in
+        // context, but do NOT silently treat unapproved names as verified facts.
+        string provisionalNames = state is null ? "" : string.Join('\n',
+            state.CandidateIdentities.Where(c => c.Status != CandidateIdentityStatus.Rejected &&
+                (combined.Contains(c.ChineseName, StringComparison.Ordinal) ||
+                 c.Aliases.Any(a => !string.IsNullOrWhiteSpace(a) && combined.Contains(a, StringComparison.Ordinal))))
+                .Take(80).Select(c =>
+                    "- ỨNG VIÊN CHƯA DUYỆT: " + c.ChineseName +
+                    "; aliases=[" + string.Join(", ", c.Aliases) + "]; không tự xác nhận danh tính"));
         string knownTerms = string.Join('\n', resources.Terms.Where(t => combined.Contains(t.Chinese, StringComparison.Ordinal))
             .Take(300).Select(t => $"- {t.Chinese} = {t.Vietnamese}"));
         string excerpts = string.Join("\n\n", evidence.Select(e =>
@@ -306,6 +316,9 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
 
             NHÂN VẬT LIÊN QUAN ĐÃ CÓ:
             {{knownCharacters}}
+
+            ỨNG VIÊN NHÂN VẬT TÍCH LŨY (CHƯA XÁC NHẬN):
+            {{provisionalNames}}
 
             GLOSSARY LIÊN QUAN ĐÃ CÓ:
             {{knownTerms}}
@@ -391,17 +404,25 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
                 finding.Reason.Trim() + "\n" + note;
             if (!stable) reason += "\nNhãn chưa có trong danh mục chuẩn; cần xác minh trước khi sử dụng.";
             IntelligenceRelationshipSuggestion? existing = state.Relationships.FirstOrDefault(x =>
-                x.Status is IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater &&
+                (x.Status is IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater) &&
                 x.SpeakerChineseName == speaker && x.ListenerChineseName == listener &&
-                RelationshipLabelNormalizer.Normalize(x.Relationship).Key == normalized.Key &&
-                x.SelfReference == finding.SelfReference.Trim() &&
-                x.AddresseeReference == finding.AddresseeReference.Trim() &&
-                x.ReverseSelfReference == finding.ReverseSelfReference.Trim() &&
-                x.ReverseAddresseeReference == finding.ReverseAddresseeReference.Trim());
+                RelationshipLabelNormalizer.Normalize(x.Relationship).Key == normalized.Key);
             if (existing is not null)
             {
                 foreach (Guid id in ids.Where(id => !existing.EvidenceIds.Contains(id))) existing.EvidenceIds.Add(id);
-                if (stable) RelationshipKnowledgeService.AddOrAggregateDirect(state, resources, existing);
+                if (existing.SelfReference != finding.SelfReference.Trim() ||
+                    existing.AddresseeReference != finding.AddresseeReference.Trim() ||
+                    existing.ReverseSelfReference != finding.ReverseSelfReference.Trim() ||
+                    existing.ReverseAddresseeReference != finding.ReverseAddresseeReference.Trim())
+                {
+                    string note = "Xưng hô AI ở đoạn khác không thống nhất (chưa duyệt); không tạo thêm hàng chờ hoặc ghi đè: " +
+                        finding.SelfReference.Trim() + " / " + finding.AddresseeReference.Trim() + " / " +
+                        finding.ReverseSelfReference.Trim() + " / " + finding.ReverseAddresseeReference.Trim();
+                    if (!existing.Reason.Contains(note, StringComparison.Ordinal))
+                        existing.Reason += "\n" + note;
+                    existing.Status = IntelligenceReviewStatus.ReviewLater;
+                    existing.Confidence = IntelligenceConfidence.Ambiguous;
+                }
                 continue;
             }
             var suggestion = new IntelligenceRelationshipSuggestion
@@ -415,8 +436,10 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
                 Status = stable ? IntelligenceReviewStatus.Pending : IntelligenceReviewStatus.ReviewLater,
                 EvidenceIds = ids.ToList(), Reason = reason
             };
+            // Stage 2 validates evidence; stage 3 strips placeholders/Chinese labels.
+            // Never create a graph fact before the user confirms its semantics/direction.
+            RelationshipIntelligenceQualityGate.ProtectUnverifiedNewSuggestion(suggestion, allowed);
             state.Relationships.Add(suggestion);
-            if (stable) RelationshipKnowledgeService.AddOrAggregateDirect(state, resources, suggestion);
         }
 
         foreach (GlossaryFinding finding in response.Glossary)
@@ -446,7 +469,8 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
         state.Validate();
     }
 
-    internal static string RelevantContextFingerprint(IReadOnlyCollection<CorpusEvidence> evidence, ProjectResources resources)
+    internal static string RelevantContextFingerprint(IReadOnlyCollection<CorpusEvidence> evidence, ProjectResources resources,
+        BookIntelligenceState? state = null)
     {
         string source = string.Join('\n', evidence.Select(x => x.Excerpt));
         IEnumerable<string> characters = resources.Characters.Profiles.Where(p => source.Contains(p.ChineseName, StringComparison.Ordinal) ||
@@ -454,7 +478,12 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
             .Select(p => $"C:{p.Id:D}:{p.ChineseName}:{p.VietnameseName}:{p.Gender}:{string.Join(',', p.Aliases.Order())}");
         IEnumerable<string> terms = resources.Terms.Where(t => source.Contains(t.Chinese, StringComparison.Ordinal))
             .Select(t => $"T:{t.Chinese}:{t.Vietnamese}");
-        string value = string.Join('|', characters.Concat(terms).Order(StringComparer.Ordinal));
+        IEnumerable<string> candidates = state?.CandidateIdentities.Where(c =>
+                c.Status != CandidateIdentityStatus.Rejected &&
+                (source.Contains(c.ChineseName, StringComparison.Ordinal) ||
+                 c.Aliases.Any(a => !string.IsNullOrWhiteSpace(a) && source.Contains(a, StringComparison.Ordinal))))
+            .Select(c => "U:" + c.ChineseName + ":" + string.Join(',', c.Aliases.Order())) ?? [];
+        string value = string.Join('|', characters.Concat(terms).Concat(candidates).Order(StringComparer.Ordinal));
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }
 
