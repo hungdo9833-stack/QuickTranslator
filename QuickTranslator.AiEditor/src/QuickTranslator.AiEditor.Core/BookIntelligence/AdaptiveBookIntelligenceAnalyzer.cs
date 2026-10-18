@@ -297,6 +297,9 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
             Không biến danh xưng phụ thuộc ngữ cảnh thành glossary toàn cục. Không tự xác minh giới tính, danh tính hoặc xưng hô nếu chứng cứ chưa rõ.
             QUAN HỆ: chỉ đưa vào relationships những quan hệ tương đối bền vững có chứng cứ trực tiếp (cha/mẹ-con, anh chị em, vợ chồng, người yêu đã xác nhận, thầy trò, cấp trên-cấp dưới).
             Không đưa sự kiện/hành động hay cảm xúc thoáng qua như đưa tiền, nhờ vả, cãi nhau, gặp gỡ, romantic interest vào quan hệ ổn định.
+            XƯNG HÔ CHO PHẦN MỀM DỊCH: self_reference, addressee_reference, reverse_self_reference, reverse_addressee_reference
+            phải là CÁCH XƯNG HÔ TIẾNG VIỆT tự nhiên có chứng cứ ở ngữ cảnh nói chuyện, không chép nguyên các từ 老婆, 老公, 妈, 爸, 哥, 姐...
+            Ví dụ: lời gọi 老婆 -> "vợ", 老公 -> "chồng" khi chứng cứ đúng người nói/người nghe; không tự tạo "anh/em" từ nhãn vợ chồng.
             Chỉ ghi xưng hô hai chiều khi chứng cứ xác nhận rõ. Nếu thiếu tuổi, thứ bậc hoặc chiều quan hệ, để trống đại từ chưa rõ; tuyệt đối không suy đoán.
             Schema {{PromptSchemaVersion}}:
             {"characters":[{"chinese_name":"","vietnamese_name":"","aliases":[],"gender":"unknown|male|female|other","primary_pronoun":"","secondary_pronoun":"","confidence":"unknown|ambiguous|proposed","evidence_ids":[],"reason":""}],"relationships":[{"speaker_chinese_name":"","listener_chinese_name":"","relationship":"","self_reference":"","addressee_reference":"","reverse_self_reference":"","reverse_addressee_reference":"","confidence":"unknown|ambiguous|proposed","evidence_ids":[],"reason":""}],"glossary":[{"chinese":"","vietnamese":"","category":"place|organization|clan|cultivation|item|realm|title|term|addressing","context_dependent":false,"confidence":"unknown|ambiguous|proposed","evidence_ids":[],"reason":""}]}
