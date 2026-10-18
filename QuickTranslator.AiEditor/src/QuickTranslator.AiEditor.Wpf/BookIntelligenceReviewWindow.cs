@@ -595,8 +595,12 @@ public sealed class BookIntelligenceReviewWindow : Window
         void ReloadDossier()
         {
             if (_state is null) return;
-            current = CharacterDossierReviewService.Build(_state, _resources)
-                .FirstOrDefault(x => x.IdentityKey == initial.IdentityKey) ?? current;
+            IReadOnlyList<CharacterDossierReviewService.Dossier> updated =
+                CharacterDossierReviewService.Build(_state, _resources);
+            current = updated.FirstOrDefault(x => x.IdentityKey == initial.IdentityKey)
+                ?? updated.FirstOrDefault(x => x.ChineseName == initial.ChineseName ||
+                     x.Aliases.Contains(initial.ChineseName, StringComparer.Ordinal))
+                ?? current;
             characterInfo.Text = "Tên Trung: " + current.ChineseName + "   |   Tên Việt: " +
                 current.VietnameseName + "\nBí danh: " + string.Join(", ", current.Aliases) +
                 "\nGiới tính: " + current.Gender + "   |   Đại từ: " +
@@ -729,6 +733,20 @@ public sealed class BookIntelligenceReviewWindow : Window
                 "? Các ô xưng hô trống sẽ KHÔNG được thêm vào quy tắc dịch.",
                 "Xác nhận có chứng cứ", MessageBoxButton.YesNo, MessageBoxImage.Question)
                 != MessageBoxResult.Yes) return;
+            if (!_resources.Characters.Profiles.Any(p =>
+                    p.ChineseName == selectedClaim.SpeakerChineseName ||
+                    p.Aliases.Contains(selectedClaim.SpeakerChineseName, StringComparer.Ordinal)) ||
+                !_resources.Characters.Profiles.Any(p =>
+                    p.ChineseName == selectedClaim.ListenerChineseName ||
+                    p.Aliases.Contains(selectedClaim.ListenerChineseName, StringComparer.Ordinal)))
+            {
+                MessageBox.Show(dialog, "Cần xác nhận hồ sơ CẢ HAI nhân vật trước khi duyệt " +
+                    "quan hệ để Knowledge Graph dùng ID nhân vật chính thức, không dùng ID ứng viên. " +
+                    "Có thể duyệt nhân vật trước trong các hồ sơ tương ứng.",
+                    "Nhân vật chưa có trong Characters", MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
             try
             {
                 BookIntelligenceState draft = BookIntelligenceStore.Clone(_state);
