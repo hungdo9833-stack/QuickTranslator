@@ -492,6 +492,272 @@ public sealed class BookIntelligenceReviewWindow : Window
         catch (Exception ex) { _translationContext.IsChecked = false; ShowFailure(ex); }
     }
 
+    private Task ShowCharacterDossierAsync(CharacterDossierReviewService.Dossier initial)
+    {
+        if (_state is null) return Task.CompletedTask;
+
+        var heading = new TextBlock
+        {
+            FontSize = 19, FontWeight = FontWeights.SemiBold,
+            Text = "Hồ sơ: " + initial.Display, Margin = new Thickness(0, 0, 0, 6)
+        };
+        var characterInfo = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 8),
+            Text = "Tên Trung: " + initial.ChineseName + "   |   Tên Việt: " + initial.VietnameseName +
+                   "\nBí danh: " + string.Join(", ", initial.Aliases) +
+                   "\nGiới tính: " + initial.Gender + "   |   Đại từ: " +
+                   initial.PrimaryPronoun + " / " + initial.SecondaryPronoun
+        };
+        var approveCharacter = new Button
+        {
+            Content = "Sửa / duyệt hồ sơ nhân vật",
+            Margin = new Thickness(0, 0, 7, 5), MinHeight = 30
+        };
+        var characterWarning = new TextBlock
+        {
+            Text = "Tên, bí danh và đại từ được đề xuất từ chứng cứ. Chỉ khi bạn bấm duyệt mới lưu vào Characters. " +
+                   "Quan hệ vẫn phải kiểm tra riêng; không tự duyệt theo nhân vật.",
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 0, 0, 10)
+        };
+        var related = new ListBox { MinWidth = 270, DisplayMemberPath =
+            nameof(CharacterDossierReviewService.RelatedPerson.Display) };
+        var details = new StackPanel { Margin = new Thickness(12, 0, 0, 0) };
+        var relationHeader = new TextBlock
+        {
+            Text = "Chọn một quan hệ để xem và chỉnh bản nháp", FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap
+        };
+        details.Children.Add(relationHeader);
+        TextBox Field(string name)
+        {
+            details.Children.Add(new TextBlock { Text = name, Margin = new Thickness(0, 7, 0, 2) });
+            var field = new TextBox { MinHeight = 27, IsEnabled = false };
+            details.Children.Add(field);
+            return field;
+        }
+        TextBox type = Field("Loại quan hệ (cần chứng cứ)");
+        var directionLabel = new TextBlock { Text = "Ai giữ vai trò đầu của quan hệ có chiều?",
+            Margin = new Thickness(0, 7, 0, 2) };
+        var direction = new ComboBox { IsEditable = false, IsEnabled = false, MinHeight = 27 };
+        details.Children.Add(directionLabel); details.Children.Add(direction);
+        TextBox self = Field("Nhân vật thứ nhất tự xưng");
+        TextBox call = Field("Nhân vật thứ nhất gọi người thứ hai");
+        TextBox reverseSelf = Field("Nhân vật thứ hai tự xưng");
+        TextBox reverseCall = Field("Nhân vật thứ hai gọi người thứ nhất");
+        TextBox from = Field("Có hiệu lực từ chương (để trống nếu chưa rõ)");
+        TextBox to = Field("Có hiệu lực đến chương (để trống nếu chưa rõ)");
+        TextBox revealed = Field("Tiết lộ từ chương (để trống nếu chưa rõ)");
+        var audit = new TextBox
+        {
+            IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+            MinHeight = 115, MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+        };
+        details.Children.Add(new TextBlock
+        {
+            Text = "Chứng cứ và mâu thuẫn", FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 9, 0, 3)
+        });
+        details.Children.Add(audit);
+        var saveRelation = new Button
+        {
+            Content = "Xác nhận quan hệ này", MinHeight = 34, IsEnabled = false,
+            Margin = new Thickness(0, 10, 0, 0)
+        };
+        details.Children.Add(saveRelation);
+
+        var columns = new Grid();
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(3, GridUnitType.Star) });
+        columns.Children.Add(related);
+        var editorScroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            Content = details };
+        Grid.SetColumn(editorScroll, 1); columns.Children.Add(editorScroll);
+
+        var root = new DockPanel { Margin = new Thickness(14) };
+        var header = new StackPanel();
+        header.Children.Add(heading); header.Children.Add(characterInfo);
+        header.Children.Add(approveCharacter); header.Children.Add(characterWarning);
+        DockPanel.SetDock(header, Dock.Top); root.Children.Add(header);
+        root.Children.Add(columns);
+        var dialog = new Window
+        {
+            Owner = this, Title = "QT Studio · Hồ sơ nhân vật và quan hệ",
+            Width = 1120, Height = 810, MinWidth = 840, MinHeight = 590,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = root
+        };
+
+        CharacterDossierReviewService.Dossier current = initial;
+        CharacterDossierReviewService.RelatedPerson? selectedRelation = null;
+        IntelligenceRelationshipSuggestion? selectedClaim = null;
+
+        void ReloadDossier()
+        {
+            if (_state is null) return;
+            current = CharacterDossierReviewService.Build(_state, _resources)
+                .FirstOrDefault(x => x.IdentityKey == initial.IdentityKey) ?? current;
+            characterInfo.Text = "Tên Trung: " + current.ChineseName + "   |   Tên Việt: " +
+                current.VietnameseName + "\nBí danh: " + string.Join(", ", current.Aliases) +
+                "\nGiới tính: " + current.Gender + "   |   Đại từ: " +
+                current.PrimaryPronoun + " / " + current.SecondaryPronoun;
+            approveCharacter.IsEnabled = !current.IsCommitted &&
+                current.CharacterSuggestions.Any(x => x.Status is
+                    IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater);
+            related.ItemsSource = current.Relations;
+        }
+        void SelectRelation()
+        {
+            selectedRelation = related.SelectedItem as CharacterDossierReviewService.RelatedPerson;
+            selectedClaim = selectedRelation?.Claims.Where(x => x.Status is
+                IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater)
+                .OrderByDescending(x => x.EvidenceIds.Count).FirstOrDefault();
+            saveRelation.IsEnabled = selectedClaim is not null;
+            bool enabled = selectedClaim is not null;
+            foreach (TextBox box in new[] { type, self, call, reverseSelf, reverseCall, from, to, revealed })
+                box.IsEnabled = enabled;
+            direction.IsEnabled = enabled;
+            if (selectedRelation is null)
+            {
+                audit.Text = ""; relationHeader.Text = "Chọn một quan hệ để xem và chỉnh bản nháp";
+                return;
+            }
+            relationHeader.Text = current.ChineseName + " ⇄ " +
+                selectedRelation.OtherChineseName + " — " + selectedRelation.ReviewStatus;
+            IntelligenceRelationshipSuggestion representative =
+                selectedClaim ?? selectedRelation.Claims[0];
+            type.Text = RelationshipAddressingReview.EditableLabel(representative.Relationship);
+            string SafeDraft(string value) =>
+                RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                    RelationshipAddressingReview.VietnameseDraft(value));
+            self.Text = SafeDraft(representative.SelfReference);
+            call.Text = SafeDraft(representative.AddresseeReference);
+            reverseSelf.Text = SafeDraft(representative.ReverseSelfReference);
+            reverseCall.Text = SafeDraft(representative.ReverseAddresseeReference);
+            from.Text = representative.ValidFromChapter?.ToString() ?? "";
+            to.Text = representative.ValidToChapter?.ToString() ?? "";
+            revealed.Text = representative.RevealedAtChapter?.ToString() ?? "";
+            RelationshipLabelNormalizer.Result classification =
+                RelationshipLabelNormalizer.Normalize(type.Text);
+            bool hasDirection = classification.Classification == RelationshipLabelNormalizer.Kind.Stable &&
+                RelationshipIntelligenceQualityGate.RequiresDirection(classification.RelationType);
+            directionLabel.Visibility = hasDirection ? Visibility.Visible : Visibility.Collapsed;
+            direction.Visibility = hasDirection ? Visibility.Visible : Visibility.Collapsed;
+            direction.ItemsSource = new[]
+            {
+                "Chưa xác nhận — không duyệt quan hệ có chiều",
+                representative.SpeakerChineseName + " giữ vai trò đầu của quan hệ",
+                representative.ListenerChineseName + " giữ vai trò đầu của quan hệ"
+            };
+            direction.SelectedIndex = hasDirection ? (int)representative.ConfirmedDirection : 0;
+            var evidenceMap = _state!.Evidence.ToDictionary(x => x.Id);
+            audit.Text = (selectedRelation.HasConflictingAddressing ||
+                          selectedRelation.HasConflictingTimeline
+                ? "CẢNH BÁO: Các batch có xưng hô hoặc mốc chương khác nhau. Không duyệt khi chưa kiểm chứng.\n\n"
+                : "") +
+                "Giá trị AI gốc: " + representative.SelfReference + " / " +
+                    representative.AddresseeReference + " / " +
+                    representative.ReverseSelfReference + " / " +
+                    representative.ReverseAddresseeReference + "\n" +
+                string.Join("\n\n", selectedRelation.EvidenceIds
+                    .Where(evidenceMap.ContainsKey).Take(6)
+                    .Select(id => ShortChapter(evidenceMap[id].ChapterId) + " · " +
+                        evidenceMap[id].StartUtf16 + ": " +
+                        evidenceMap[id].Excerpt.Replace('\r', ' ').Replace('\n', ' '))) +
+                (selectedRelation.EvidenceIds.Count > 6
+                    ? "\n… mở đề xuất thô để xem toàn bộ chứng cứ." : "");
+        }
+        related.SelectionChanged += (_, _) => SelectRelation();
+        type.TextChanged += (_, _) =>
+        {
+            if (selectedClaim is null) return;
+            var mapped = RelationshipLabelNormalizer.Normalize(type.Text);
+            bool needs = mapped.Classification == RelationshipLabelNormalizer.Kind.Stable &&
+                RelationshipIntelligenceQualityGate.RequiresDirection(mapped.RelationType);
+            direction.Visibility = needs ? Visibility.Visible : Visibility.Collapsed;
+            directionLabel.Visibility = needs ? Visibility.Visible : Visibility.Collapsed;
+        };
+        approveCharacter.Click += async (_, _) =>
+        {
+            if (_state is null) return;
+            IntelligenceCharacterSuggestion? character = current.CharacterSuggestions.FirstOrDefault(x =>
+                x.Status is IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater);
+            if (character is null) return;
+            try
+            {
+                CharacterProfile? edited = _editCharacter(character);
+                if (edited is null) return;
+                ApplyCommit(await new BookIntelligenceReviewService(_session).AcceptCharacterAsync(
+                    _state, character.Id, edited, _resources.Revision));
+                ReloadDossier();
+                MessageBox.Show(dialog, "Đã lưu hồ sơ nhân vật. Quan hệ chưa được tự duyệt.",
+                    "QT Studio", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Không thể lưu hồ sơ",
+                MessageBoxButton.OK, MessageBoxImage.Warning); }
+        };
+        saveRelation.Click += async (_, _) =>
+        {
+            if (_state is null || selectedClaim is null) return;
+            if (!TryChapter(from.Text, out int? start) ||
+                !TryChapter(to.Text, out int? end) ||
+                !TryChapter(revealed.Text, out int? reveal) ||
+                (start.HasValue && end.HasValue && start > end))
+            {
+                MessageBox.Show(dialog, "Mốc chương không hợp lệ.", "QT Studio",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            var parsed = RelationshipLabelNormalizer.Normalize(type.Text);
+            if (parsed.Classification != RelationshipLabelNormalizer.Kind.Stable)
+            {
+                MessageBox.Show(dialog, "Loại quan hệ chưa được nhận diện là quan hệ ổn định. " +
+                    "Hãy chỉnh loại quan hệ hoặc mở chế độ kỹ thuật để kiểm tra.",
+                    "QT Studio", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (RelationshipIntelligenceQualityGate.RequiresDirection(parsed.RelationType) &&
+                direction.SelectedIndex <= 0)
+            {
+                MessageBox.Show(dialog, "Phải chọn rõ người giữ vai trò đầu từ nguyên tác.",
+                    "QT Studio", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (MessageBox.Show(dialog,
+                "Đã đối chiếu chứng cứ và xác nhận quan hệ giữa " +
+                selectedClaim.SpeakerChineseName + " với " + selectedClaim.ListenerChineseName +
+                "? Các ô xưng hô trống sẽ KHÔNG được thêm vào quy tắc dịch.",
+                "Xác nhận có chứng cứ", MessageBoxButton.YesNo, MessageBoxImage.Question)
+                != MessageBoxResult.Yes) return;
+            try
+            {
+                BookIntelligenceState draft = BookIntelligenceStore.Clone(_state);
+                IntelligenceRelationshipSuggestion editable = draft.Relationships.Single(x => x.Id == selectedClaim.Id);
+                editable.Relationship = type.Text.Trim();
+                editable.ConfirmedDirection = RelationshipIntelligenceQualityGate.RequiresDirection(parsed.RelationType)
+                    ? (RelationshipIntelligenceQualityGate.Direction)direction.SelectedIndex
+                    : RelationshipIntelligenceQualityGate.Direction.Unverified;
+                editable.SelfReference = self.Text.Trim();
+                editable.AddresseeReference = call.Text.Trim();
+                editable.ReverseSelfReference = reverseSelf.Text.Trim();
+                editable.ReverseAddresseeReference = reverseCall.Text.Trim();
+                editable.ValidFromChapter = start;
+                editable.ValidToChapter = end;
+                editable.RevealedAtChapter = reveal;
+                ApplyCommit(await new BookIntelligenceReviewService(_session).AcceptRelationshipAsync(
+                    draft, editable.Id, _resources.Revision));
+                ReloadDossier();
+                MessageBox.Show(dialog, "Đã duyệt quan hệ đã chọn. Các giả thuyết khác vẫn được giữ.",
+                    "QT Studio", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Không thể duyệt quan hệ",
+                MessageBoxButton.OK, MessageBoxImage.Warning); }
+        };
+        ReloadDossier();
+        dialog.ShowDialog();
+        return Task.CompletedTask;
+    }
+
     private void ShowRelationshipPairCases()
     {
         if (_state is null) return;
