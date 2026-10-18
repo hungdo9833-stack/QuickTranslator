@@ -37,7 +37,7 @@ public sealed class CharacterDossierReviewTests
                 SpeakerChineseName = "林00", ListenerChineseName = "林01",
                 Relationship = i % 2 == 0 ? "siblings" : "sibling",
                 EvidenceIds = [Guid.NewGuid()], Status = IntelligenceReviewStatus.ReviewLater,
-                SelfReference = i % 3 == 0 ? "我" : ""
+                SelfReference = i % 3 == 0 ? "anh" : "em"
             });
         }
         IReadOnlyList<CharacterDossierReviewService.Dossier> result =
