@@ -403,17 +403,28 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
             string reason = string.IsNullOrWhiteSpace(note) ? finding.Reason.Trim() :
                 finding.Reason.Trim() + "\n" + note;
             if (!stable) reason += "\nNhãn chưa có trong danh mục chuẩn; cần xác minh trước khi sử dụng.";
+            bool symmetric = stable &&
+                !RelationshipIntelligenceQualityGate.RequiresDirection(normalized.RelationType);
             IntelligenceRelationshipSuggestion? existing = state.Relationships.FirstOrDefault(x =>
                 (x.Status is IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater) &&
-                x.SpeakerChineseName == speaker && x.ListenerChineseName == listener &&
-                RelationshipLabelNormalizer.Normalize(x.Relationship).Key == normalized.Key);
+                RelationshipLabelNormalizer.Normalize(x.Relationship).Key == normalized.Key &&
+                ((x.SpeakerChineseName == speaker && x.ListenerChineseName == listener) ||
+                 (symmetric && x.SpeakerChineseName == listener && x.ListenerChineseName == speaker)));
             if (existing is not null)
             {
                 foreach (Guid id in ids.Where(id => !existing.EvidenceIds.Contains(id))) existing.EvidenceIds.Add(id);
-                if (existing.SelfReference != finding.SelfReference.Trim() ||
-                    existing.AddresseeReference != finding.AddresseeReference.Trim() ||
-                    existing.ReverseSelfReference != finding.ReverseSelfReference.Trim() ||
-                    existing.ReverseAddresseeReference != finding.ReverseAddresseeReference.Trim())
+                // Only reversible relationship TYPES may share a case across both
+                // named directions; addressing fields must be remapped by speaker.
+                bool reversedNames = existing.SpeakerChineseName == listener &&
+                                     existing.ListenerChineseName == speaker;
+                string newSelf = (reversedNames ? finding.ReverseSelfReference : finding.SelfReference).Trim();
+                string newCall = (reversedNames ? finding.ReverseAddresseeReference : finding.AddresseeReference).Trim();
+                string newReverseSelf = (reversedNames ? finding.SelfReference : finding.ReverseSelfReference).Trim();
+                string newReverseCall = (reversedNames ? finding.AddresseeReference : finding.ReverseAddresseeReference).Trim();
+                if (existing.SelfReference != newSelf ||
+                    existing.AddresseeReference != newCall ||
+                    existing.ReverseSelfReference != newReverseSelf ||
+                    existing.ReverseAddresseeReference != newReverseCall)
                 {
                     string note = "Xưng hô AI ở đoạn khác không thống nhất (chưa duyệt); không tạo thêm hàng chờ hoặc ghi đè: " +
                         finding.SelfReference.Trim() + " / " + finding.AddresseeReference.Trim() + " / " +
