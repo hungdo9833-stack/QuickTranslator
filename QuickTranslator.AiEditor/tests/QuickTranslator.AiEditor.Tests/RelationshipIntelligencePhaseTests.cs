@@ -125,4 +125,40 @@ public sealed class RelationshipIntelligencePhaseTests
         Assert.Contains("ỨNG VIÊN CHƯA DUYỆT: 林哲", prompt);
         Assert.DoesNotContain("ỨNG VIÊN CHƯA DUYỆT: 苏雨", prompt);
     }
+    [Fact]
+    public void Reversed_spouse_claims_share_one_pending_suggestion_and_never_auto_create_graph_facts()
+    {
+        Guid project = Guid.NewGuid(), chapter = Guid.NewGuid();
+        const string text = "林哲看着苏雨，说道：老婆，我们是夫妻。";
+        var ev = Ev(text);
+        ev.ChapterId = chapter;
+        var state = new BookIntelligenceState { ProjectId = project };
+        state.Chapters.Add(new CorpusChapterIndex
+        {
+            ChapterId = chapter, ChapterNumber = 1, SourceSha256 = ev.SourceSha256,
+            SourceLengthUtf16 = text.Length, Evidence = [ev]
+        });
+        var resources = new ProjectResources { ProjectId = project,
+            Characters = new CharacterProject { Id = project } };
+        var response = new AnalyzerResponse();
+        response.Relationships.Add(new RelationshipFinding
+        {
+            SpeakerChineseName = "林哲", ListenerChineseName = "苏雨",
+            Relationship = "spouse", SelfReference = "我", AddresseeReference = "老婆",
+            EvidenceIds = [ev.Id], Reason = "夫妻"
+        });
+        response.Relationships.Add(new RelationshipFinding
+        {
+            SpeakerChineseName = "苏雨", ListenerChineseName = "林哲",
+            Relationship = "married", ReverseSelfReference = "我",
+            ReverseAddresseeReference = "老婆", EvidenceIds = [ev.Id], Reason = "夫妻"
+        });
+        AdaptiveBookIntelligenceAnalyzer.ApplyValidatedResponse(state, response, [ev], resources);
+        var candidate = Assert.Single(state.Relationships);
+        Assert.Equal("Vợ chồng", candidate.Relationship);
+        Assert.Empty(state.RelationshipGraph);
+        Assert.Equal(IntelligenceReviewStatus.ReviewLater, candidate.Status);
+        Assert.Contains("我 / 老婆", candidate.Reason);
+    }
+
 }
