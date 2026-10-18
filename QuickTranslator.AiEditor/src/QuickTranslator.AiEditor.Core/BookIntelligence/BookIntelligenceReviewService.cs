@@ -146,17 +146,27 @@ public sealed class BookIntelligenceReviewService(ProjectSession session)
                 state, resources, suggestion,
                 reverseDirection: suggestion.ConfirmedDirection ==
                     RelationshipIntelligenceQualityGate.Direction.ListenerHasRole);
-            if (knowledge is not null)
-            {
-                suggestion.ValidFromChapter ??= knowledge.ValidFromChapter;
-                suggestion.ValidToChapter ??= knowledge.ValidToChapter;
-                suggestion.RevealedAtChapter ??= knowledge.RevealedAtChapter;
-                knowledge.Status = KnowledgeRelationshipStatus.Confirmed;
-                knowledge.DiscoveryMethod = RelationshipDiscoveryMethod.UserConfirmed;
-                knowledge.ValidFromChapter = suggestion.ValidFromChapter;
-                knowledge.ValidToChapter = suggestion.ValidToChapter;
-                knowledge.RevealedAtChapter = suggestion.RevealedAtChapter;
-            }
+        }
+        else if (suggestion.KnowledgeRelationshipId is Guid legacyId)
+        {
+            // Backwards compatibility: an explicitly human-approved, non-directional
+            // legacy graph fact may still be confirmed. Never promote directional
+            // old AI facts without verified role order.
+            KnowledgeRelationship? legacy = state.RelationshipGraph.SingleOrDefault(x => x.Id == legacyId);
+            if (legacy is not null &&
+                !RelationshipIntelligenceQualityGate.RequiresDirection(legacy.RelationType))
+                knowledge = legacy;
+        }
+        if (knowledge is not null)
+        {
+            suggestion.ValidFromChapter ??= knowledge.ValidFromChapter;
+            suggestion.ValidToChapter ??= knowledge.ValidToChapter;
+            suggestion.RevealedAtChapter ??= knowledge.RevealedAtChapter;
+            knowledge.Status = KnowledgeRelationshipStatus.Confirmed;
+            knowledge.DiscoveryMethod = RelationshipDiscoveryMethod.UserConfirmed;
+            knowledge.ValidFromChapter = suggestion.ValidFromChapter;
+            knowledge.ValidToChapter = suggestion.ValidToChapter;
+            knowledge.RevealedAtChapter = suggestion.RevealedAtChapter;
         }
         if (!RelationshipIntelligenceQualityGate.MayInstallAddressing(
             suggestion.SelfReference, suggestion.AddresseeReference))
