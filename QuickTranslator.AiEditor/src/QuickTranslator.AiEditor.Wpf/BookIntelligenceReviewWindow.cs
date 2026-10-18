@@ -355,8 +355,13 @@ public sealed class BookIntelligenceReviewWindow : Window
                     result = await review.AcceptGlossaryAsync(_state, glossary.Id, translated, _resources.Revision);
                     break;
                 case IntelligenceRelationshipSuggestion relationship:
-                    if (!EditRelationship(relationship)) return;
-                    result = await review.AcceptRelationshipAsync(_state, relationship.Id, _resources.Revision);
+                    // Edit a detached copy. Never mutate the displayed review queue if
+                    // the user cancels or the project/resource commit fails.
+                    BookIntelligenceState draft = BookIntelligenceStore.Clone(_state);
+                    IntelligenceRelationshipSuggestion editable =
+                        draft.Relationships.Single(x => x.Id == relationship.Id);
+                    if (!EditRelationship(editable)) return;
+                    result = await review.AcceptRelationshipAsync(draft, editable.Id, _resources.Revision);
                     break;
                 case DerivedRelationship derived:
                     result = await review.AcceptDerivedRelationshipAsync(_state, derived.Id);
@@ -583,26 +588,132 @@ public sealed class BookIntelligenceReviewWindow : Window
 
     private bool EditRelationship(IntelligenceRelationshipSuggestion item)
     {
-        var panel = new StackPanel { Margin = new Thickness(12) };
-        TextBox Field(string label, string value) { panel.Children.Add(new TextBlock { Text = label }); var box = new TextBox { Text = value }; panel.Children.Add(box); return box; }
-        TextBox relationship = Field("Quan hệ", item.Relationship), self = Field("Người nói tự xưng", item.SelfReference),
-            address = Field("Người nói gọi đối phương", item.AddresseeReference),
-            reverseSelf = Field("Chiều ngược tự xưng (để trống nếu chưa xác nhận)", item.ReverseSelfReference),
-            reverseAddress = Field("Chiều ngược gọi đối phương", item.ReverseAddresseeReference),
-            validFrom = Field("Có hiệu lực từ chương (để trống nếu chưa rõ)", item.ValidFromChapter?.ToString() ?? ""),
-            validTo = Field("Có hiệu lực đến chương (để trống nếu chưa rõ)", item.ValidToChapter?.ToString() ?? ""),
-            revealedAt = Field("Được tiết lộ từ chương", item.RevealedAtChapter?.ToString() ?? "");
-        var save = new Button { Content = "Xác nhận", IsDefault = true }; panel.Children.Add(save);
-        var dialog = new Window { Owner = this, Title = "Xác nhận quan hệ & xưng hô", Width = 500, Height = 610,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = panel };
-        save.Click += (_, _) => {
-            if (!TryChapter(validFrom.Text, out int? from) || !TryChapter(validTo.Text, out int? to) ||
-                !TryChapter(revealedAt.Text, out int? revealed) || from is not null && to is not null && from > to)
-            { MessageBox.Show(dialog, "Mốc chương không hợp lệ hoặc chương bắt đầu lớn hơn chương kết thúc.", "QT Studio", MessageBoxButton.OK, MessageBoxImage.Warning); return; }
-            item.Relationship = relationship.Text.Trim(); item.SelfReference = self.Text.Trim();
-            item.AddresseeReference = address.Text.Trim(); item.ReverseSelfReference = reverseSelf.Text.Trim();
-            item.ReverseAddresseeReference = reverseAddress.Text.Trim(); item.ValidFromChapter = from;
-            item.ValidToChapter = to; item.RevealedAtChapter = revealed; dialog.DialogResult = true; };
+        var panel = new StackPanel { Margin = new Thickness(14) };
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"{item.SpeakerChineseName} → {item.ListenerChineseName}",
+            FontSize = 17, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 5)
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Ô trống nghĩa là Gemini chưa tìm được cách gọi có chứng cứ, KHÔNG phải lỗi hiển thị. " +
+                   "Các cách gọi Trung văn rõ nghĩa được chuyển thành bản nháp tiếng Việt để bạn kiểm tra.",
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray, Margin = new Thickness(0, 0, 0, 10)
+        });
+
+        TextBox Field(string label, string value)
+        {
+            panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 5, 0, 2) });
+            var box = new TextBox { Text = value, MinHeight = 26 };
+            panel.Children.Add(box);
+            return box;
+        }
+
+        TextBox relation = Field("Quan hệ (duyệt lại theo nguyên tác)",
+            RelationshipAddressingReview.EditableLabel(item.Relationship));
+        string[] sourceValues =
+        [
+            item.SelfReference, item.AddresseeReference,
+            item.ReverseSelfReference, item.ReverseAddresseeReference
+        ];
+        TextBox self = Field("Người thứ nhất tự xưng", RelationshipAddressingReview.VietnameseDraft(sourceValues[0]));
+        TextBox address = Field("Người thứ nhất gọi người thứ hai", RelationshipAddressingReview.VietnameseDraft(sourceValues[1]));
+        TextBox reverseSelf = Field("Người thứ hai tự xưng", RelationshipAddressingReview.VietnameseDraft(sourceValues[2]));
+        TextBox reverseAddress = Field("Người thứ hai gọi người thứ nhất", RelationshipAddressingReview.VietnameseDraft(sourceValues[3]));
+
+        string[] notes = sourceValues.Select((value, index) =>
+            (index + 1).ToString() + ". " + RelationshipAddressingReview.ConversionNote(value)).ToArray();
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Gợi ý AI gốc / giải thích:\n" + string.Join("\n", notes) +
+                   "\n" + RelationshipAddressingReview.ManualReviewHint(item.Relationship),
+            TextWrapping = TextWrapping.Wrap, Foreground = Brushes.DimGray,
+            Margin = new Thickness(0, 8, 0, 12)
+        });
+        TextBox validFrom = Field("Có hiệu lực từ chương (để trống nếu chưa rõ)",
+            item.ValidFromChapter?.ToString() ?? "");
+        TextBox validTo = Field("Có hiệu lực đến chương (để trống nếu chưa rõ)",
+            item.ValidToChapter?.ToString() ?? "");
+        TextBox revealedAt = Field("Được tiết lộ từ chương",
+            item.RevealedAtChapter?.ToString() ?? "");
+
+        if (_state is not null)
+        {
+            Dictionary<Guid, CorpusEvidence> evidence = _state.Evidence.ToDictionary(x => x.Id);
+            string[] excerpts = item.EvidenceIds.Where(evidence.ContainsKey)
+                .Take(3)
+                .Select(id => ShortChapter(evidence[id].ChapterId) + " · " +
+                    evidence[id].StartUtf16 + ": " +
+                    evidence[id].Excerpt.Replace('\r', ' ').Replace('\n', ' ').Trim())
+                .ToArray();
+            if (excerpts.Length > 0)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = "Chứng cứ gốc (đọc trước khi xác nhận):",
+                    FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 10, 0, 3)
+                });
+                panel.Children.Add(new TextBox
+                {
+                    Text = string.Join("\n\n", excerpts), IsReadOnly = true,
+                    TextWrapping = TextWrapping.Wrap, AcceptsReturn = true,
+                    MinHeight = 95, MaxHeight = 150,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto
+                });
+            }
+        }
+
+        var save = new Button { Content = "Xác nhận lưu", IsDefault = true,
+            Margin = new Thickness(0, 12, 0, 0), MinHeight = 33 };
+        panel.Children.Add(save);
+        var dialog = new Window
+        {
+            Owner = this, Title = "Kiểm tra quan hệ & xưng hô (bản nháp)",
+            Width = 580, Height = 790, MinHeight = 540, MinWidth = 510,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new ScrollViewer
+            {
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Content = panel
+            }
+        };
+        save.Click += (_, _) =>
+        {
+            if (!TryChapter(validFrom.Text, out int? from) ||
+                !TryChapter(validTo.Text, out int? to) ||
+                !TryChapter(revealedAt.Text, out int? revealed) ||
+                from is not null && to is not null && from > to)
+            {
+                MessageBox.Show(dialog, "Mốc chương không hợp lệ hoặc chương bắt đầu lớn hơn chương kết thúc.",
+                    "QT Studio", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(relation.Text))
+            {
+                MessageBox.Show(dialog, "Quan hệ không được để trống.",
+                    "QT Studio", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+            bool incomplete = string.IsNullOrWhiteSpace(self.Text) ||
+                              string.IsNullOrWhiteSpace(address.Text);
+            if (incomplete && MessageBox.Show(dialog,
+                "Chưa đủ cặp 'tự xưng / gọi đối phương' của chiều đầu. " +
+                "Chỉ lưu kết luận quan hệ đã xác nhận, CHƯA có quy tắc xưng hô đầy đủ " +
+                "cho chiều này khi dịch truyện. Bạn vẫn muốn lưu quan hệ?",
+                "Thiếu dữ liệu xưng hô", MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
+
+            item.Relationship = relation.Text.Trim();
+            item.SelfReference = self.Text.Trim();
+            item.AddresseeReference = address.Text.Trim();
+            item.ReverseSelfReference = reverseSelf.Text.Trim();
+            item.ReverseAddresseeReference = reverseAddress.Text.Trim();
+            item.ValidFromChapter = from;
+            item.ValidToChapter = to;
+            item.RevealedAtChapter = revealed;
+            dialog.DialogResult = true;
+        };
         return dialog.ShowDialog() == true;
     }
 
