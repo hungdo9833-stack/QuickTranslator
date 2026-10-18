@@ -417,10 +417,14 @@ public sealed class AdaptiveBookIntelligenceAnalyzer(IOllamaClient client)
                 // named directions; addressing fields must be remapped by speaker.
                 bool reversedNames = existing.SpeakerChineseName == listener &&
                                      existing.ListenerChineseName == speaker;
-                string newSelf = (reversedNames ? finding.ReverseSelfReference : finding.SelfReference).Trim();
-                string newCall = (reversedNames ? finding.ReverseAddresseeReference : finding.AddresseeReference).Trim();
-                string newReverseSelf = (reversedNames ? finding.SelfReference : finding.ReverseSelfReference).Trim();
-                string newReverseCall = (reversedNames ? finding.AddresseeReference : finding.ReverseAddresseeReference).Trim();
+                string newSelf = RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                    (reversedNames ? finding.ReverseSelfReference : finding.SelfReference).Trim());
+                string newCall = RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                    (reversedNames ? finding.ReverseAddresseeReference : finding.AddresseeReference).Trim());
+                string newReverseSelf = RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                    (reversedNames ? finding.SelfReference : finding.ReverseSelfReference).Trim());
+                string newReverseCall = RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                    (reversedNames ? finding.AddresseeReference : finding.ReverseAddresseeReference).Trim());
                 if (existing.SelfReference != newSelf ||
                     existing.AddresseeReference != newCall ||
                     existing.ReverseSelfReference != newReverseSelf ||
