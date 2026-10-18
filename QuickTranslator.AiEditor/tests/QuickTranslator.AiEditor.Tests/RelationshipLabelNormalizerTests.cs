@@ -9,6 +9,8 @@ public sealed class RelationshipLabelNormalizerTests
     [InlineData("brother-sister", "sister-brother")]
     [InlineData("mother-son", "mother and son")]
     [InlineData("married", "spouse")]
+    [InlineData("boyfriend", "girlfriend")]
+    [InlineData("lover", "boyfriend/girlfriend")]
     public void English_synonyms_resolve_to_the_same_canonical_relation(string a, string b)
     {
         RelationshipLabelNormalizer.Result left = RelationshipLabelNormalizer.Normalize(a);
