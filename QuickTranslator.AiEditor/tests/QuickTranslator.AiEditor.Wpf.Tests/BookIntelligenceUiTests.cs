@@ -35,6 +35,7 @@ public sealed class BookIntelligenceUiTests
         Assert.Equal("Khảo sát lại", Field<Button>(window, "_rerun").Content);
         Assert.Equal("Bắt đầu / Tiếp tục", Field<Button>(window, "_run").Content);
         Assert.Equal("Đoạn bị chặn", Field<Button>(window, "_blocked").Content);
+        Assert.Equal("Hồ sơ theo cặp", Field<Button>(window, "_pairs").Content);
         Assert.False(Field<Button>(window, "_blocked").IsEnabled);
         Assert.NotNull(Field<ComboBox>(window, "_kindFilter"));
         Assert.Contains("Knowledge Context", Field<CheckBox>(window, "_translationContext").Content?.ToString());
