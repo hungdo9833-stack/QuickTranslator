@@ -703,6 +703,14 @@ public sealed class BookIntelligenceReviewWindow : Window
                 "Thiếu dữ liệu xưng hô", MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)
                 return;
+            bool partialReverse = string.IsNullOrWhiteSpace(reverseSelf.Text) !=
+                                  string.IsNullOrWhiteSpace(reverseAddress.Text);
+            if (!incomplete && partialReverse && MessageBox.Show(dialog,
+                "Chiều ngược chỉ có một cách xưng hô. Nếu tiếp tục, QT Studio sẽ " +
+                "lưu chiều đầu nhưng chưa tạo quy tắc dịch chiều ngược. Tiếp tục?",
+                "Xưng hô chiều ngược chưa đủ", MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                return;
 
             item.Relationship = relation.Text.Trim();
             item.SelfReference = self.Text.Trim();
