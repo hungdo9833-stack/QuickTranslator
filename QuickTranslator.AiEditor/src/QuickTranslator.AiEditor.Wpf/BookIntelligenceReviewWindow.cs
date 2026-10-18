@@ -633,43 +633,13 @@ public sealed class BookIntelligenceReviewWindow : Window
             IntelligenceRelationshipSuggestion representative =
                 selectedClaim ?? selectedRelation.Claims[0];
             type.Text = RelationshipAddressingReview.EditableLabel(representative.Relationship);
-            string SafeDraft(string value) =>
-                RelationshipIntelligenceQualityGate.SafeAddressingDraft(
-                    RelationshipAddressingReview.VietnameseDraft(value));
-            // Stage 3: prefill with the single NON-CONFLICTING known value
-            // across batches. Blank values are unknown, not contradictions.
-            // Different explicit values stay empty for the reviewer to decide.
-            string ConsensusAddress(int field)
-            {
-                string[] values = selectedRelation.Claims.Select(c =>
-                {
-                    bool sameOrder = c.SpeakerChineseName == representative.SpeakerChineseName &&
-                        c.ListenerChineseName == representative.ListenerChineseName;
-                    string raw = field switch
-                    {
-                        0 => sameOrder ? c.SelfReference : c.ReverseSelfReference,
-                        1 => sameOrder ? c.AddresseeReference : c.ReverseAddresseeReference,
-                        2 => sameOrder ? c.ReverseSelfReference : c.SelfReference,
-                        _ => sameOrder ? c.ReverseAddresseeReference : c.AddresseeReference
-                    };
-                    return SafeDraft(raw);
-                }).Where(x => !string.IsNullOrWhiteSpace(x))
-                  .Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
-                return values.Length == 1 ? values[0] : "";
-            }
-            string ChapterConsensus(Func<IntelligenceRelationshipSuggestion, int?> selector)
-            {
-                int[] values = selectedRelation.Claims.Select(selector)
-                    .Where(x => x.HasValue).Select(x => x!.Value).Distinct().Take(2).ToArray();
-                return values.Length == 1 ? values[0].ToString() : "";
-            }
-            self.Text = ConsensusAddress(0);
-            call.Text = ConsensusAddress(1);
-            reverseSelf.Text = ConsensusAddress(2);
-            reverseCall.Text = ConsensusAddress(3);
-            from.Text = ChapterConsensus(x => x.ValidFromChapter);
-            to.Text = ChapterConsensus(x => x.ValidToChapter);
-            revealed.Text = ChapterConsensus(x => x.RevealedAtChapter);
+            self.Text = selectedRelation.ConsensusAddressing(representative, 0);
+            call.Text = selectedRelation.ConsensusAddressing(representative, 1);
+            reverseSelf.Text = selectedRelation.ConsensusAddressing(representative, 2);
+            reverseCall.Text = selectedRelation.ConsensusAddressing(representative, 3);
+            from.Text = selectedRelation.ConsensusChapter(x => x.ValidFromChapter)?.ToString() ?? "";
+            to.Text = selectedRelation.ConsensusChapter(x => x.ValidToChapter)?.ToString() ?? "";
+            revealed.Text = selectedRelation.ConsensusChapter(x => x.RevealedAtChapter)?.ToString() ?? "";
             RelationshipLabelNormalizer.Result classification =
                 RelationshipLabelNormalizer.Normalize(type.Text);
             bool hasDirection = classification.Classification == RelationshipLabelNormalizer.Kind.Stable &&
