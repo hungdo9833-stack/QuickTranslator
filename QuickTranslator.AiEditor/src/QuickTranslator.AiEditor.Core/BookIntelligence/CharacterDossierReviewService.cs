@@ -32,6 +32,35 @@ public static class CharacterDossierReviewService
         public string AddressingPreview => string.Join(" / ", Claims.Select(c =>
             $"{c.SelfReference} → {c.AddresseeReference}; {c.ReverseSelfReference} → {c.ReverseAddresseeReference}")
             .Distinct(StringComparer.Ordinal).Take(3));
+        public string ConsensusAddressing(IntelligenceRelationshipSuggestion representative, int field)
+        {
+            if (field is < 0 or > 3) throw new ArgumentOutOfRangeException(nameof(field));
+            string Safe(string raw) => RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                RelationshipAddressingReview.VietnameseDraft(raw));
+            string[] values = Claims.Select(c =>
+            {
+                bool sameOrder = c.SpeakerChineseName == representative.SpeakerChineseName &&
+                    c.ListenerChineseName == representative.ListenerChineseName;
+                string raw = field switch
+                {
+                    0 => sameOrder ? c.SelfReference : c.ReverseSelfReference,
+                    1 => sameOrder ? c.AddresseeReference : c.ReverseAddresseeReference,
+                    2 => sameOrder ? c.ReverseSelfReference : c.SelfReference,
+                    _ => sameOrder ? c.ReverseAddresseeReference : c.AddresseeReference
+                };
+                return Safe(raw);
+            }).Where(x => !string.IsNullOrWhiteSpace(x))
+              .Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+            return values.Length == 1 ? values[0] : "";
+        }
+
+        public int? ConsensusChapter(Func<IntelligenceRelationshipSuggestion, int?> selector)
+        {
+            int[] values = Claims.Select(selector).Where(x => x.HasValue)
+                .Select(x => x!.Value).Distinct().Take(2).ToArray();
+            return values.Length == 1 ? values[0] : null;
+        }
+
         public string Display => OtherVietnameseName + " (" + OtherChineseName + ") · " +
             RelationshipLabel + " · " + EvidenceIds.Count + " chứng cứ · " + ReviewStatus;
     }
