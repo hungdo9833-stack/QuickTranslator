@@ -28,6 +28,8 @@ public sealed class BookIntelligenceReviewWindow : Window
     private readonly ComboBox _model = new() { Width = 240, IsEditable = false };
     private readonly Button _run = new() { Content = "Bắt đầu / Tiếp tục" };
     private readonly Button _rerun = new() { Content = "Khảo sát lại", ToolTip = "Lưu bản sao kết quả cũ và khảo sát lại từ đầu, giữ dữ liệu đã xác nhận." };
+    private readonly Button _pairs = new() { Content = "Hồ sơ theo cặp", IsEnabled = false,
+        ToolTip = "Xem chung tất cả bằng chứng và giả thuyết của mỗi cặp nhân vật; không tự duyệt." };
     private readonly Button _blocked = new() { Content = "Đoạn bị chặn", IsEnabled = false,
         ToolTip = "Xem các đoạn Google đã từ chối; không tự gửi lại hoặc duyệt nội dung." };
     private readonly Button _cancel = new() { Content = "Tạm dừng", IsEnabled = false };
@@ -93,7 +95,7 @@ public sealed class BookIntelligenceReviewWindow : Window
         controls.Children.Add(_profile);
         controls.Children.Add(new TextBlock { Text = "Model độc lập", VerticalAlignment = VerticalAlignment.Center });
         controls.Children.Add(_model); controls.Children.Add(new TextBlock { Text = "Chế độ", VerticalAlignment = VerticalAlignment.Center });
-        controls.Children.Add(_scanMode); controls.Children.Add(_run); controls.Children.Add(_rerun); controls.Children.Add(_cancel); controls.Children.Add(_blocked);
+        controls.Children.Add(_scanMode); controls.Children.Add(_run); controls.Children.Add(_rerun); controls.Children.Add(_cancel); controls.Children.Add(_blocked); controls.Children.Add(_pairs);
         controls.Children.Add(_translationContext);
         var filters = new WrapPanel { Margin = new Thickness(0, 5, 0, 3) };
         filters.Children.Add(new TextBlock { Text = "Lọc", VerticalAlignment = VerticalAlignment.Center });
@@ -134,6 +136,7 @@ public sealed class BookIntelligenceReviewWindow : Window
         _run.Click += async (_, _) => await RunAsync();
         _rerun.Click += async (_, _) => await RunAsync(forceResurvey: true);
         _blocked.Click += async (_, _) => await ShowBlockedEvidenceAsync();
+        _pairs.Click += (_, _) => ShowRelationshipPairCases();
         _cancel.Click += (_, _) => _cancellation?.Cancel();
         _save.Click += async (_, _) => await SaveSelectedAsync();
         _merge.Click += async (_, _) => await MergeSelectedAsync();
@@ -474,6 +477,72 @@ public sealed class BookIntelligenceReviewWindow : Window
         catch (Exception ex) { _translationContext.IsChecked = false; ShowFailure(ex); }
     }
 
+    private void ShowRelationshipPairCases()
+    {
+        if (_state is null) return;
+        IReadOnlyList<RelationshipPairReviewService.PairCase> cases =
+            RelationshipPairReviewService.Build(_state, _resources);
+        if (cases.Count == 0) return;
+        var caseList = new ListBox
+        {
+            ItemsSource = cases, DisplayMemberPath = nameof(RelationshipPairReviewService.PairCase.Summary),
+            MinWidth = 320
+        };
+        var claimList = new ListBox { DisplayMemberPath = nameof(PairClaimRow.Label), MinWidth = 320 };
+        var hint = new TextBlock
+        {
+            Text = "Mỗi cặp nhân vật chỉ có một hồ sơ tổng hợp. Các kết luận khác nhau, " +
+                "mốc thời gian và chứng cứ gốc được giữ nguyên; không tự hợp nhất quan hệ mâu thuẫn.",
+            TextWrapping = TextWrapping.Wrap, Margin = new Thickness(10)
+        };
+        var left = new DockPanel();
+        var title = new TextBlock { Text = "Cặp nhân vật", FontWeight = FontWeights.SemiBold };
+        DockPanel.SetDock(title, Dock.Top);
+        left.Children.Add(title); left.Children.Add(caseList);
+        var right = new DockPanel();
+        var subTitle = new TextBlock { Text = "Các giả thuyết / mốc quan hệ", FontWeight = FontWeights.SemiBold };
+        DockPanel.SetDock(subTitle, Dock.Top);
+        right.Children.Add(subTitle); right.Children.Add(claimList);
+        var columns = new Grid();
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        columns.Children.Add(left); Grid.SetColumn(right, 1); columns.Children.Add(right);
+        var jump = new Button { Content = "Mở đề xuất đã chọn để duyệt riêng", MinHeight = 32,
+            Margin = new Thickness(10) };
+        var root = new DockPanel();
+        DockPanel.SetDock(hint, Dock.Top); DockPanel.SetDock(jump, Dock.Bottom);
+        root.Children.Add(hint); root.Children.Add(jump); root.Children.Add(columns);
+        var dialog = new Window { Owner = this, Title = "Hồ sơ quan hệ theo cặp",
+            Width = 1000, Height = 620, MinWidth = 740, MinHeight = 420,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner, Content = root };
+        caseList.SelectionChanged += (_, _) =>
+        {
+            if (caseList.SelectedItem is RelationshipPairReviewService.PairCase chosen)
+                claimList.ItemsSource = chosen.Claims.Select(claim => new PairClaimRow(claim,
+                    claim.Relationship + " · " + claim.Status + " · " +
+                    claim.EvidenceIds.Count + " chứng cứ · " +
+                    "từ chương " + (claim.ValidFromChapter?.ToString() ?? "?") +
+                    " đến " + (claim.ValidToChapter?.ToString() ?? "?"))).ToArray();
+        };
+        void Jump()
+        {
+            if (claimList.SelectedItem is not PairClaimRow row) return;
+            _kindFilter.SelectedIndex = 0;
+            _statusFilter.SelectedIndex = 0;
+            _search.Text = "";
+            RefreshQueue();
+            ReviewRow? target = Rows().FirstOrDefault(x => x.Id == row.Claim.Id);
+            if (target is null) return;
+            _queue.SelectedItem = target;
+            _queue.ScrollIntoView(target);
+            dialog.Close();
+        }
+        jump.Click += (_, _) => Jump();
+        claimList.MouseDoubleClick += (_, _) => Jump();
+        caseList.SelectedIndex = 0;
+        dialog.ShowDialog();
+    }
+
     private async Task ShowBlockedEvidenceAsync()
     {
         if (_state is null) return;
@@ -517,6 +586,7 @@ public sealed class BookIntelligenceReviewWindow : Window
     {
         _queue.ItemsSource = Rows();
         _blocked.IsEnabled = _state?.Evidence.Any(x => x.IsCurrent && x.AiBlocked) == true;
+        _pairs.IsEnabled = _state?.Relationships.Count > 0;
         _mergeTarget.ItemsSource = _resources.Characters.Profiles.OrderBy(x => x.VietnameseName).ToList();
         if (_state is not null) _summary.Text = $"{_state.Evidence.Count(x => x.IsCurrent)} đoạn chứng cứ · {_state.PendingCount} đề xuất chờ duyệt · AutoApplyVerified = false.";
         ShowSelection();
@@ -861,6 +931,7 @@ public sealed class BookIntelligenceReviewWindow : Window
             _ => Status
         };
     }
+    private sealed record PairClaimRow(IntelligenceRelationshipSuggestion Claim, string Label);
     private sealed record EvidenceRow(CorpusEvidence Evidence, string Label);
     private sealed record BlockedEvidenceRow(CorpusEvidence Evidence, string Label);
 }
