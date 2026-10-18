@@ -605,9 +605,11 @@ public sealed class BookIntelligenceReviewWindow : Window
                 current.VietnameseName + "\nBí danh: " + string.Join(", ", current.Aliases) +
                 "\nGiới tính: " + current.Gender + "   |   Đại từ: " +
                 current.PrimaryPronoun + " / " + current.SecondaryPronoun;
-            approveCharacter.IsEnabled = !current.IsCommitted &&
-                current.CharacterSuggestions.Any(x => x.Status is
-                    IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater);
+            approveCharacter.IsEnabled = current.CharacterSuggestions.Any(x => x.Status is
+                IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater);
+            approveCharacter.Content = current.IsCommitted
+                ? "Xác nhận gộp đề xuất AI vào nhân vật đã có"
+                : "Sửa / duyệt hồ sơ nhân vật";
             related.ItemsSource = current.Relations;
         }
         void SelectRelation()
@@ -689,12 +691,31 @@ public sealed class BookIntelligenceReviewWindow : Window
             if (character is null) return;
             try
             {
-                CharacterProfile? edited = _editCharacter(character);
-                if (edited is null) return;
-                ApplyCommit(await new BookIntelligenceReviewService(_session).AcceptCharacterAsync(
-                    _state, character.Id, edited, _resources.Revision));
+                var review = new BookIntelligenceReviewService(_session);
+                if (current.IsCommitted)
+                {
+                    CharacterProfile? existing = _resources.Characters.Profiles.FirstOrDefault(p =>
+                        current.IdentityKey == "P:" + p.Id.ToString("D"));
+                    if (existing is null) throw new InvalidOperationException(
+                        "Không xác định được hồ sơ đã lưu; hãy mở lại Project.");
+                    if (MessageBox.Show(dialog,
+                        "Tên Trung của ứng viên trùng hồ sơ " + existing.VietnameseName +
+                        ". Chỉ gộp sau khi kiểm tra đúng người và các bí danh. " +
+                        "Không tự hợp nhất quan hệ. Xác nhận gộp?",
+                        "Xác nhận danh tính", MessageBoxButton.YesNo, MessageBoxImage.Warning)
+                        != MessageBoxResult.Yes) return;
+                    ApplyCommit(await review.MergeCharacterAsync(
+                        _state, character.Id, existing.Id, _resources.Revision));
+                }
+                else
+                {
+                    CharacterProfile? edited = _editCharacter(character);
+                    if (edited is null) return;
+                    ApplyCommit(await review.AcceptCharacterAsync(
+                        _state, character.Id, edited, _resources.Revision));
+                }
                 ReloadDossier();
-                MessageBox.Show(dialog, "Đã lưu hồ sơ nhân vật. Quan hệ chưa được tự duyệt.",
+                MessageBox.Show(dialog, "Đã lưu danh tính được xác nhận. Quan hệ chưa được tự duyệt.",
                     "QT Studio", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex) { MessageBox.Show(dialog, ex.Message, "Không thể lưu hồ sơ",
