@@ -202,21 +202,39 @@ public static class CharacterDossierReviewService
                         IntelligenceRelationshipSuggestion[] claims = group.Select(x => x.Claim)
                             .DistinctBy(x => x.Id).OrderBy(x => x.RevealedAtChapter ?? int.MaxValue).ToArray();
                         Working other = records[group.First().OtherKey];
-                        string[] addressing = claims.Select(c =>
-                            row.Key == ResolveKeyWithoutChanges(c.SpeakerChineseName, names)
-                                ? c.SelfReference + "|" + c.AddresseeReference +
-                                  "|" + c.ReverseSelfReference + "|" + c.ReverseAddresseeReference
-                                : c.ReverseSelfReference + "|" + c.ReverseAddresseeReference +
-                                  "|" + c.SelfReference + "|" + c.AddresseeReference)
-                            .Distinct(StringComparer.Ordinal).ToArray();
-                        string[] timelines = claims.Select(c =>
-                            c.ValidFromChapter + ":" + c.ValidToChapter + ":" + c.RevealedAtChapter)
-                            .Distinct(StringComparer.Ordinal).ToArray();
+                        // Missing addressing and unknown chapter markers are not
+                        // contradictions. Only two DIFFERENT non-empty claims for
+                        // the same direction/field are marked as conflicting.
+                        bool ConflictingAddress(int slot)
+                        {
+                            string Safe(string value) =>
+                                RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+                                    RelationshipAddressingReview.VietnameseDraft(value));
+                            return claims.Select(c =>
+                            {
+                                bool forward = row.Key ==
+                                    ResolveKeyWithoutChanges(c.SpeakerChineseName, names);
+                                return slot switch
+                                {
+                                    0 => Safe(forward ? c.SelfReference : c.ReverseSelfReference),
+                                    1 => Safe(forward ? c.AddresseeReference : c.ReverseAddresseeReference),
+                                    2 => Safe(forward ? c.ReverseSelfReference : c.SelfReference),
+                                    _ => Safe(forward ? c.ReverseAddresseeReference : c.AddresseeReference)
+                                };
+                            }).Where(x => !string.IsNullOrWhiteSpace(x))
+                              .Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any();
+                        }
+                        bool conflictingAddressing = Enumerable.Range(0, 4).Any(ConflictingAddress);
+                        bool DifferentKnownChapter(Func<IntelligenceRelationshipSuggestion, int?> selector) =>
+                            claims.Select(selector).Where(x => x.HasValue).Distinct().Skip(1).Any();
+                        bool conflictingTimeline = DifferentKnownChapter(x => x.ValidFromChapter) ||
+                            DifferentKnownChapter(x => x.ValidToChapter) ||
+                            DifferentKnownChapter(x => x.RevealedAtChapter);
                         return new RelatedPerson(other.Key, other.Chinese,
                             string.IsNullOrWhiteSpace(other.Vietnamese) ? other.Chinese : other.Vietnamese,
                             RelationshipLabelNormalizer.Display(claims[0].Relationship),
                             claims, claims.SelectMany(x => x.EvidenceIds).Distinct().ToArray(),
-                            addressing.Length > 1, timelines.Length > 1);
+                            conflictingAddressing, conflictingTimeline);
                     })
                     .OrderByDescending(x => x.PendingClaims).ThenBy(x => x.OtherVietnameseName,
                         StringComparer.Ordinal).ToArray();
