@@ -947,7 +947,7 @@ public sealed class BookIntelligenceReviewWindow : Window
                 CharacterDossierReviewService.Build(_state, _resources);
             _summary.Text = _dossierMode
                 ? $"{dossiers.Count} hồ sơ nhân vật · {dossiers.Count(x => x.NeedsReview)} cần duyệt · " +
-                  $"{dossiers.Sum(x => x.PendingRelations) / 2} nhóm quan hệ chờ xác minh (ước tính; mỗi quan hệ có trong hai hồ sơ). " +
+                  $"{CharacterDossierReviewService.CountPendingRelationGroups(dossiers)} nhóm quan hệ chờ xác minh. " +
                   "Không tự duyệt AI."
                 : $"{_state.Evidence.Count(x => x.IsCurrent)} đoạn chứng cứ · {_state.PendingCount} đề xuất thô chờ duyệt.";
         }
