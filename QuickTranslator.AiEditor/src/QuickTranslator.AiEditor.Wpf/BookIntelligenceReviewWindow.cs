@@ -47,6 +47,9 @@ public sealed class BookIntelligenceReviewWindow : Window
     private readonly Button _later = new() { Content = "Xem xét sau" };
     private readonly Button _reject = new() { Content = "Không phải / Bỏ đề xuất" };
     private readonly Button _open = new() { Content = "Mở đoạn nguyên tác" };
+    private readonly Button _viewToggle = new()
+    { Content = "Xem đề xuất thô", ToolTip = "Chuyển qua lại giữa hồ sơ nhân vật và dữ liệu kiểm toán chi tiết." };
+    private bool _dossierMode = true;
     private readonly ComboBox _scanMode = new() { Width = 170, ItemsSource = Enum.GetValues<IntelligenceScanMode>() };
     private readonly CheckBox _translationContext = new() { Content = "Dùng Knowledge Context khi dịch (thử nghiệm)", Margin = new Thickness(10, 4, 0, 4) };
     private readonly TextBox _search = new() { Width = 190, ToolTip = "Tìm tên Trung, Việt hoặc bí danh" };
@@ -97,6 +100,7 @@ public sealed class BookIntelligenceReviewWindow : Window
         controls.Children.Add(_model); controls.Children.Add(new TextBlock { Text = "Chế độ", VerticalAlignment = VerticalAlignment.Center });
         controls.Children.Add(_scanMode); controls.Children.Add(_run); controls.Children.Add(_rerun); controls.Children.Add(_cancel); controls.Children.Add(_blocked); controls.Children.Add(_pairs);
         controls.Children.Add(_translationContext);
+        controls.Children.Add(_viewToggle);
         var filters = new WrapPanel { Margin = new Thickness(0, 5, 0, 3) };
         filters.Children.Add(new TextBlock { Text = "Lọc", VerticalAlignment = VerticalAlignment.Center });
         filters.Children.Add(_kindFilter); filters.Children.Add(_statusFilter); filters.Children.Add(_search);
@@ -143,6 +147,12 @@ public sealed class BookIntelligenceReviewWindow : Window
         _later.Click += async (_, _) => await SetStatusAsync(IntelligenceReviewStatus.ReviewLater);
         _reject.Click += async (_, _) => await SetStatusAsync(IntelligenceReviewStatus.Rejected);
         _open.Click += async (_, _) => await OpenSelectedEvidenceAsync();
+        _viewToggle.Click += (_, _) =>
+        {
+            _dossierMode = !_dossierMode;
+            _viewToggle.Content = _dossierMode ? "Xem đề xuất thô" : "Xem hồ sơ nhân vật";
+            RefreshQueue();
+        };
         _evidence.MouseDoubleClick += async (_, _) => await OpenSelectedEvidenceAsync();
         _translationContext.Click += async (_, _) => await SaveContextFeatureFlagAsync();
         _profile.SelectionChanged += (_, _) => SelectSurveyBackend();
@@ -341,6 +351,11 @@ public sealed class BookIntelligenceReviewWindow : Window
     private async Task SaveSelectedAsync()
     {
         if (_state is null || _queue.SelectedItem is not ReviewRow row) return;
+        if (row.Value is CharacterDossierReviewService.Dossier dossier)
+        {
+            await ShowCharacterDossierAsync(dossier);
+            return;
+        }
         try
         {
             var review = new BookIntelligenceReviewService(_session);
@@ -585,16 +600,53 @@ public sealed class BookIntelligenceReviewWindow : Window
     private void RefreshQueue()
     {
         _queue.ItemsSource = Rows();
+        _kindFilter.IsEnabled = !_dossierMode;
+        _merge.IsEnabled = !_dossierMode;
+        _mergeTarget.IsEnabled = !_dossierMode;
+        _later.IsEnabled = !_dossierMode;
+        _reject.IsEnabled = !_dossierMode;
+        _save.Content = _dossierMode ? "Mở hồ sơ nhân vật" : "Chỉnh sửa rồi lưu";
         _blocked.IsEnabled = _state?.Evidence.Any(x => x.IsCurrent && x.AiBlocked) == true;
         _pairs.IsEnabled = _state?.Relationships.Count > 0;
         _mergeTarget.ItemsSource = _resources.Characters.Profiles.OrderBy(x => x.VietnameseName).ToList();
-        if (_state is not null) _summary.Text = $"{_state.Evidence.Count(x => x.IsCurrent)} đoạn chứng cứ · {_state.PendingCount} đề xuất chờ duyệt · AutoApplyVerified = false.";
+        if (_state is not null)
+        {
+            IReadOnlyList<CharacterDossierReviewService.Dossier> dossiers =
+                CharacterDossierReviewService.Build(_state, _resources);
+            _summary.Text = _dossierMode
+                ? $"{dossiers.Count} hồ sơ nhân vật · {dossiers.Count(x => x.NeedsReview)} cần duyệt · " +
+                  $"{dossiers.Sum(x => x.PendingRelations) / 2} nhóm quan hệ chờ xác minh (ước tính; mỗi quan hệ có trong hai hồ sơ). " +
+                  "Không tự duyệt AI."
+                : $"{_state.Evidence.Count(x => x.IsCurrent)} đoạn chứng cứ · {_state.PendingCount} đề xuất thô chờ duyệt.";
+        }
         ShowSelection();
     }
 
     private List<ReviewRow> Rows()
     {
         if (_state is null) return [];
+        if (_dossierMode)
+        {
+            IEnumerable<ReviewRow> dossiers = CharacterDossierReviewService.Build(_state, _resources)
+                .Select(x => new ReviewRow(x.Id, "Hồ sơ", x.Display + " · " + x.Description,
+                    x.IdentityAmbiguous ? "Ambiguous" : "Proposed", x.ReviewStatus,
+                    x.IsCommitted ? "Đã duyệt" : "AI + chứng cứ", x.EvidenceIds.Count, x));
+            string dossierQuery = _search.Text.Trim();
+            if (dossierQuery.Length > 0)
+                dossiers = dossiers.Where(x => x.Title.Contains(dossierQuery, StringComparison.OrdinalIgnoreCase) ||
+                    x.Value is CharacterDossierReviewService.Dossier d &&
+                    d.Aliases.Any(a => a.Contains(dossierQuery, StringComparison.OrdinalIgnoreCase)));
+            dossiers = _statusFilter.SelectedIndex switch
+            {
+                1 => dossiers.Where(x => x.Status == "Pending" || x.Status == "Ambiguous"),
+                2 => dossiers.Where(x => x.Status == "Accepted"),
+                3 => dossiers.Where(x => x.Status == "Ambiguous" ||
+                    x.Value is CharacterDossierReviewService.Dossier d &&
+                    d.Relations.Any(r => r.HasConflictingAddressing || r.HasConflictingTimeline)),
+                _ => dossiers
+            };
+            return dossiers.ToList();
+        }
         IEnumerable<ReviewRow> rows = _state.Characters.Select(x => new ReviewRow(x.Id, "Nhân vật", $"{x.ChineseName} → {x.VietnameseName}", x.Confidence.ToString(), x.Status.ToString(), "AI trực tiếp", x.EvidenceIds.Count, x))
             .Concat(_state.Relationships.Select(x => new ReviewRow(x.Id, "Quan hệ", $"{x.SpeakerChineseName} → {x.ListenerChineseName}: {RelationshipLabelNormalizer.Display(x.Relationship)}", x.Confidence.ToString(), x.Status.ToString(), "AI trực tiếp", x.EvidenceIds.Count, x)))
             .Concat(_state.DerivedRelationships.Select(x => new ReviewRow(x.Id, "Suy luận", $"{CharacterName(x.SubjectCharacterId)} → {CharacterName(x.TargetCharacterId)}: {RelationDisplay(x.OutputRelation)}",
@@ -630,6 +682,13 @@ public sealed class BookIntelligenceReviewWindow : Window
         IEnumerable<Guid> ids;
         switch (row.Value)
         {
+            case CharacterDossierReviewService.Dossier x:
+                reason = $"HỒ SƠ NHÂN VẬT: {x.Display}\n" +
+                    $"Bí danh: {string.Join(", ", x.Aliases)}\nGiới tính: {x.Gender}\n" +
+                    $"Đại từ: {x.PrimaryPronoun} / {x.SecondaryPronoun}\n" +
+                    $"Quan hệ: {x.Relations.Count}, cần duyệt: {x.PendingRelations}, kết luận thô: {x.RawRelationshipClaims}\n\n" +
+                    string.Join("\n", x.Relations.Select(r => "• " + r.Display));
+                ids = x.EvidenceIds; break;
             case IntelligenceCharacterSuggestion x:
                 reason = $"Tên Trung: {x.ChineseName}\nTên Việt đề xuất: {x.VietnameseName}\nBí danh: {string.Join(", ", x.Aliases)}\nGiới tính: {x.Gender}\nĐại từ: {x.PrimaryNarrativePronoun} / {x.SecondaryNarrativePronoun}\n\n{x.Reason}";
                 ids = x.EvidenceIds; break;
