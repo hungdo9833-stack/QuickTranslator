@@ -1,3 +1,5 @@
+using QuickTranslator.AiEditor.Core.Projects;
+
 namespace QuickTranslator.AiEditor.Core.BookIntelligence;
 
 /// <summary>
