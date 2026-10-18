@@ -108,16 +108,34 @@ public static class CharacterDossierReviewService
                 Name(alias, key);
             }
         }
+        string IdentityKey(CandidateIdentity identity)
+        {
+            if (identity.Status == CandidateIdentityStatus.ConfirmedIdentityMerge &&
+                identity.ProposedExistingCharacterId is Guid target &&
+                resources.Characters.Profiles.Any(p => p.Id == target))
+                return "P:" + target.ToString("D");
+
+            // DISPLAY-ONLY coalescing for an exact, unique primary Chinese name.
+            // This never confirms an alias or mutates the stored candidate record.
+            if (identity.Status != CandidateIdentityStatus.IdentityConflict)
+            {
+                CharacterProfile[] sameName = resources.Characters.Profiles
+                    .Where(p => !string.IsNullOrWhiteSpace(p.ChineseName) &&
+                        p.ChineseName == identity.ChineseName).ToArray();
+                if (sameName.Length == 1) return "P:" + sameName[0].Id.ToString("D");
+            }
+            return "C:" + identity.Id.ToString("D");
+        }
+
         foreach (CandidateIdentity identity in state.CandidateIdentities.Where(x =>
             x.Status != CandidateIdentityStatus.Rejected))
         {
-            string key = identity.Status == CandidateIdentityStatus.ConfirmedIdentityMerge &&
-                identity.ProposedExistingCharacterId is Guid target &&
-                resources.Characters.Profiles.Any(p => p.Id == target)
-                ? "P:" + target.ToString("D")
-                : "C:" + identity.Id.ToString("D");
+            string key = IdentityKey(identity);
             Working row = Get(key);
             row.Candidate ??= identity;
+            if (row.Profile is not null &&
+                identity.Status != CandidateIdentityStatus.ConfirmedIdentityMerge)
+                row.Ambiguous = true; // Needs explicit user confirmation/merge.
             if (string.IsNullOrWhiteSpace(row.Chinese)) row.Chinese = identity.ChineseName;
             if (string.IsNullOrWhiteSpace(row.Vietnamese)) row.Vietnamese = identity.VietnameseName;
             Name(identity.ChineseName, key);
@@ -143,16 +161,10 @@ public static class CharacterDossierReviewService
         }
         foreach (IntelligenceCharacterSuggestion finding in state.Characters)
         {
-            string key = finding.CandidateIdentityId != Guid.Empty &&
-                state.CandidateIdentities.Any(x => x.Id == finding.CandidateIdentityId &&
-                    x.Status != CandidateIdentityStatus.Rejected)
-                ? state.CandidateIdentities.Where(x => x.Id == finding.CandidateIdentityId)
-                    .Select(x => x.Status == CandidateIdentityStatus.ConfirmedIdentityMerge &&
-                        x.ProposedExistingCharacterId is Guid target &&
-                        resources.Characters.Profiles.Any(p => p.Id == target)
-                        ? "P:" + target.ToString("D")
-                        : "C:" + x.Id.ToString("D")).First()
-                : Resolve(finding.ChineseName);
+            CandidateIdentity? linked = state.CandidateIdentities.FirstOrDefault(x =>
+                x.Id == finding.CandidateIdentityId &&
+                x.Status != CandidateIdentityStatus.Rejected);
+            string key = linked is null ? Resolve(finding.ChineseName) : IdentityKey(linked);
             Working row = Get(key);
             row.Suggestions.Add(finding);
             if (string.IsNullOrWhiteSpace(row.Chinese)) row.Chinese = finding.ChineseName;
