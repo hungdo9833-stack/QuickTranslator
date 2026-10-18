@@ -729,10 +729,14 @@ public sealed class BookIntelligenceReviewWindow : Window
             item.SelfReference, item.AddresseeReference,
             item.ReverseSelfReference, item.ReverseAddresseeReference
         ];
-        TextBox self = Field("Người thứ nhất tự xưng", RelationshipAddressingReview.VietnameseDraft(sourceValues[0]));
-        TextBox address = Field("Người thứ nhất gọi người thứ hai", RelationshipAddressingReview.VietnameseDraft(sourceValues[1]));
-        TextBox reverseSelf = Field("Người thứ hai tự xưng", RelationshipAddressingReview.VietnameseDraft(sourceValues[2]));
-        TextBox reverseAddress = Field("Người thứ hai gọi người thứ nhất", RelationshipAddressingReview.VietnameseDraft(sourceValues[3]));
+        // Present a safe VIETNAMESE edit draft even for old AI results saved
+        // before the new gate. Original Chinese values stay visible in notes.
+        string SafeDraft(string raw) => RelationshipIntelligenceQualityGate.SafeAddressingDraft(
+            RelationshipAddressingReview.VietnameseDraft(raw));
+        TextBox self = Field("Người thứ nhất tự xưng", SafeDraft(sourceValues[0]));
+        TextBox address = Field("Người thứ nhất gọi người thứ hai", SafeDraft(sourceValues[1]));
+        TextBox reverseSelf = Field("Người thứ hai tự xưng", SafeDraft(sourceValues[2]));
+        TextBox reverseAddress = Field("Người thứ hai gọi người thứ nhất", SafeDraft(sourceValues[3]));
 
         string[] notes = sourceValues.Select((value, index) =>
             (index + 1).ToString() + ". " + RelationshipAddressingReview.ConversionNote(value)).ToArray();
