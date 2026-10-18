@@ -31,6 +31,14 @@ public sealed class BookIntelligenceUiTests
         var window = Assert.IsType<BookIntelligenceReviewWindow>(fixture.Get<object>("_bookIntelligenceWindow"));
         Assert.True(window.IsVisible);
         Assert.Equal(DataGridSelectionMode.Extended, Field<DataGrid>(window, "_queue").SelectionMode);
+        var viewToggle = Field<Button>(window, "_viewToggle");
+        Assert.Equal("Xem đề xuất thô", viewToggle.Content);
+        Assert.True(Field<bool>(window, "_dossierMode"));
+        viewToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.Equal("Xem hồ sơ nhân vật", viewToggle.Content);
+        Assert.False(Field<bool>(window, "_dossierMode"));
+        viewToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        Assert.True(Field<bool>(window, "_dossierMode"));
         Assert.NotNull(Field<TextBox>(window, "_search"));
         Assert.Equal("Khảo sát lại", Field<Button>(window, "_rerun").Content);
         Assert.Equal("Bắt đầu / Tiếp tục", Field<Button>(window, "_run").Content);
