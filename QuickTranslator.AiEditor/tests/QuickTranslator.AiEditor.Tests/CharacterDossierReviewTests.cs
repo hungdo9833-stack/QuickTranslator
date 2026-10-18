@@ -125,6 +125,33 @@ public sealed class CharacterDossierReviewTests
     }
 
     [Fact]
+    public void Existing_approved_name_and_unapproved_identical_primary_name_share_one_flagged_display_dossier()
+    {
+        Guid project = Guid.NewGuid();
+        var profile = new CharacterProfile
+        { ChineseName = "林哲", VietnameseName = "Lâm Triết" };
+        var state = new BookIntelligenceState { ProjectId = project };
+        var candidate = new CandidateIdentity
+        {
+            ChineseName = "林哲", VietnameseName = "Lâm Triết chưa duyệt",
+            Status = CandidateIdentityStatus.Candidate
+        };
+        state.CandidateIdentities.Add(candidate);
+        state.Characters.Add(new IntelligenceCharacterSuggestion
+        {
+            CandidateIdentityId = candidate.Id, ChineseName = "林哲",
+            VietnameseName = "Lâm Triết", EvidenceIds = [Guid.NewGuid()]
+        });
+        var rows = CharacterDossierReviewService.Build(state, Resources(project, profile));
+        var dossier = Assert.Single(rows);
+        Assert.True(dossier.IsCommitted);
+        Assert.True(dossier.IdentityAmbiguous);
+        Assert.True(dossier.NeedsReview);
+        Assert.Single(dossier.CharacterSuggestions);
+        Assert.Equal(CandidateIdentityStatus.Candidate, candidate.Status); // display-only, not approved
+    }
+
+    [Fact]
     public void Conflicting_timeline_is_grouped_without_erasing_historical_claims()
     {
         Guid id = Guid.NewGuid();
