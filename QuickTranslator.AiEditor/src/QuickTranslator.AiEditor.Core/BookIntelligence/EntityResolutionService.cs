@@ -69,16 +69,23 @@ public static class EntityResolutionService
 public static class RelationshipKnowledgeService
 {
     public static KnowledgeRelationship? AddOrAggregateDirect(BookIntelligenceState state, ProjectResources resources,
-        IntelligenceRelationshipSuggestion suggestion)
+        IntelligenceRelationshipSuggestion suggestion, bool reverseDirection = false)
     {
-        Guid? subject = EntityResolutionService.ResolveStableId(state, resources, suggestion.SpeakerChineseName);
-        Guid? target = EntityResolutionService.ResolveStableId(state, resources, suggestion.ListenerChineseName);
+        Guid? subject = EntityResolutionService.ResolveStableId(state, resources,
+            reverseDirection ? suggestion.ListenerChineseName : suggestion.SpeakerChineseName);
+        Guid? target = EntityResolutionService.ResolveStableId(state, resources,
+            reverseDirection ? suggestion.SpeakerChineseName : suggestion.ListenerChineseName);
         if (subject is null || target is null || subject == target) return null;
         RelationshipLabelNormalizer.Result normalized = RelationshipLabelNormalizer.Normalize(suggestion.Relationship);
         // An event, attraction, or unrecognized label must never enter the
         // knowledge graph as a confirmed social/romantic relationship.
         if (normalized.Classification != RelationshipLabelNormalizer.Kind.Stable) return null;
         KnowledgeRelationType type = normalized.RelationType;
+        // Never manufacture directional facts from AI's arbitrary speaker/listener
+        // ordering; a human must explicitly identify who occupies which role.
+        if (RelationshipIntelligenceQualityGate.RequiresDirection(type) &&
+            suggestion.ConfirmedDirection == RelationshipIntelligenceQualityGate.Direction.Unverified)
+            return null;
         KnowledgeRelationship? existing = state.RelationshipGraph.FirstOrDefault(x =>
             x.SubjectCharacterId == subject && x.TargetCharacterId == target && x.RelationType == type &&
             x.Status != KnowledgeRelationshipStatus.Rejected);
