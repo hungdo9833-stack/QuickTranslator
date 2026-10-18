@@ -188,7 +188,8 @@ public static class CharacterDossierReviewService
             Name(name, key);
             return key;
         }
-        foreach (IntelligenceCharacterSuggestion finding in state.Characters)
+        foreach (IntelligenceCharacterSuggestion finding in state.Characters.Where(x =>
+            x.Status != IntelligenceReviewStatus.Rejected))
         {
             CandidateIdentity? linked = state.CandidateIdentities.FirstOrDefault(x =>
                 x.Id == finding.CandidateIdentityId &&
