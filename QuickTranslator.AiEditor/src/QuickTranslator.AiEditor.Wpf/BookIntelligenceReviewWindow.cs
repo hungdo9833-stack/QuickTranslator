@@ -611,6 +611,49 @@ public sealed class BookIntelligenceReviewWindow : Window
 
         TextBox relation = Field("Quan hệ (duyệt lại theo nguyên tác)",
             RelationshipAddressingReview.EditableLabel(item.Relationship));
+        var directionLabel = new TextBlock
+        {
+            Text = "Chiều vai trò (bắt buộc với cha/con, thầy/trò, cấp trên/dưới)",
+            Margin = new Thickness(0, 9, 0, 3)
+        };
+        var direction = new ComboBox { MinHeight = 28, IsEditable = false };
+        panel.Children.Add(directionLabel);
+        panel.Children.Add(direction);
+        void UpdateDirectionChoices()
+        {
+            RelationshipLabelNormalizer.Result mapped =
+                RelationshipLabelNormalizer.Normalize(relation.Text);
+            bool directional = mapped.Classification == RelationshipLabelNormalizer.Kind.Stable &&
+                RelationshipIntelligenceQualityGate.RequiresDirection(mapped.RelationType);
+            directionLabel.Visibility = directional ? Visibility.Visible : Visibility.Collapsed;
+            direction.Visibility = directional ? Visibility.Visible : Visibility.Collapsed;
+            if (!directional) return;
+            string role = mapped.RelationType switch
+            {
+                KnowledgeRelationType.Parent or KnowledgeRelationType.BiologicalFather or
+                    KnowledgeRelationType.BiologicalMother or KnowledgeRelationType.AdoptiveParent
+                    => "cha/mẹ",
+                KnowledgeRelationType.Child or KnowledgeRelationType.BiologicalChild or
+                    KnowledgeRelationType.AdoptiveChild => "con",
+                KnowledgeRelationType.Teacher => "thầy/cô",
+                KnowledgeRelationType.Disciple => "học trò",
+                KnowledgeRelationType.Superior => "cấp trên",
+                KnowledgeRelationType.Subordinate => "cấp dưới",
+                KnowledgeRelationType.Grandfather or KnowledgeRelationType.Grandmother => "ông/bà",
+                KnowledgeRelationType.Grandchild => "cháu",
+                _ => "vai trò nêu trong quan hệ"
+            };
+            int selected = Math.Clamp((int)item.ConfirmedDirection, 0, 2);
+            direction.ItemsSource = new[]
+            {
+                "Chưa xác minh — không thể duyệt quan hệ có chiều",
+                item.SpeakerChineseName + " là " + role + " của " + item.ListenerChineseName,
+                item.ListenerChineseName + " là " + role + " của " + item.SpeakerChineseName
+            };
+            direction.SelectedIndex = selected;
+        }
+        relation.TextChanged += (_, _) => UpdateDirectionChoices();
+        UpdateDirectionChoices();
         string[] sourceValues =
         [
             item.SelfReference, item.AddresseeReference,
@@ -694,6 +737,18 @@ public sealed class BookIntelligenceReviewWindow : Window
                     "QT Studio", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+            RelationshipLabelNormalizer.Result mapped =
+                RelationshipLabelNormalizer.Normalize(relation.Text);
+            bool directional = mapped.Classification == RelationshipLabelNormalizer.Kind.Stable &&
+                RelationshipIntelligenceQualityGate.RequiresDirection(mapped.RelationType);
+            if (directional && direction.SelectedIndex <= 0)
+            {
+                MessageBox.Show(dialog,
+                    "Quan hệ có chiều: hãy xác minh từ nguyên tác ai là cha/mẹ, con, thầy/trò hoặc cấp trên. " +
+                    "Không được suy ra vai trò chỉ từ vị trí hai tên do AI trả về.",
+                    "Cần chọn chiều quan hệ", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
             bool incomplete = string.IsNullOrWhiteSpace(self.Text) ||
                               string.IsNullOrWhiteSpace(address.Text);
             if (incomplete && MessageBox.Show(dialog,
@@ -713,6 +768,9 @@ public sealed class BookIntelligenceReviewWindow : Window
                 return;
 
             item.Relationship = relation.Text.Trim();
+            item.ConfirmedDirection = directional
+                ? (RelationshipIntelligenceQualityGate.Direction)direction.SelectedIndex
+                : RelationshipIntelligenceQualityGate.Direction.Unverified;
             item.SelfReference = self.Text.Trim();
             item.AddresseeReference = address.Text.Trim();
             item.ReverseSelfReference = reverseSelf.Text.Trim();
