@@ -266,6 +266,21 @@ public static class CharacterDossierReviewService
             .ToArray();
     }
 
+    public static int CountPendingRelationGroups(IEnumerable<Dossier> dossiers)
+    {
+        return dossiers.SelectMany(d => d.Relations.Where(r => r.NeedsReview)
+            .Select(r =>
+            {
+                string left = string.CompareOrdinal(d.IdentityKey, r.OtherKey) <= 0
+                    ? d.IdentityKey : r.OtherKey;
+                string right = string.CompareOrdinal(d.IdentityKey, r.OtherKey) <= 0
+                    ? r.OtherKey : d.IdentityKey;
+                return left + "\u001f" + right + "\u001f" +
+                    RelationshipLabelNormalizer.Normalize(r.RelationshipLabel).Key;
+            }))
+            .Distinct(StringComparer.Ordinal).Count();
+    }
+
     private static string ResolveKeyWithoutChanges(string name,
         Dictionary<string, HashSet<string>> index) =>
         index.TryGetValue(name.Trim(), out HashSet<string>? keys) && keys.Count == 1
