@@ -20,7 +20,8 @@ public static class CharacterDossierReviewService
     {
         public int PendingClaims => Claims.Count(c => c.Status is
             IntelligenceReviewStatus.Pending or IntelligenceReviewStatus.ReviewLater);
-        public bool NeedsReview => PendingClaims > 0;
+        public bool NeedsReview => !Claims.Any(c => c.Status == IntelligenceReviewStatus.Accepted) &&
+            PendingClaims > 0 || HasConflictingAddressing || HasConflictingTimeline;
         public bool HasUnverifiedDirection => Claims.Any(c =>
             RelationshipIntelligenceQualityGate.RequiresDirection(
                 RelationshipLabelNormalizer.Normalize(c.Relationship).RelationType) &&
@@ -48,7 +49,8 @@ public static class CharacterDossierReviewService
         public int RawRelationshipClaims => Relations.Sum(r => r.Claims.Count);
         public bool HasUnresolvedRelations => Relations.Any(r => r.NeedsReview ||
             r.HasConflictingAddressing || r.HasConflictingTimeline || r.HasUnverifiedDirection);
-        public bool NeedsReview => PendingCharacters > 0 || HasUnresolvedRelations || IdentityAmbiguous;
+        public bool NeedsReview => !IsCommitted || PendingCharacters > 0 ||
+            HasUnresolvedRelations || IdentityAmbiguous;
         public string ReviewStatus => IdentityAmbiguous ? "Mơ hồ" :
             NeedsReview ? "Pending" : "Accepted";
         public string Display => VietnameseName + " (" + ChineseName + ")";
@@ -184,8 +186,11 @@ public static class CharacterDossierReviewService
                 Get(key).Ambiguous = true;
 
         return records.Values
+            // Relationship-only names are not silently upgraded to characters.
+            // They remain visible as nested counterpart warnings and in raw audit,
+            // but do NOT inflate the main "one dossier per detected character" list.
             .Where(x => x.Profile is not null || x.Candidate is not null ||
-                x.Suggestions.Count > 0 || x.Claims.Count > 0)
+                x.Suggestions.Count > 0)
             .Select(row =>
             {
                 var relations = row.Claims
