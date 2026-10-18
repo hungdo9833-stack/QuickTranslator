@@ -65,6 +65,9 @@ public sealed class IntelligenceRelationshipSuggestion
     public string SpeakerChineseName { get; set; } = "";
     public string ListenerChineseName { get; set; } = "";
     public string Relationship { get; set; } = "";
+    // Explicit human verification of the direction of this relationship.
+    // Default is Unverified for ALL previously saved projects.
+    public RelationshipIntelligenceQualityGate.Direction ConfirmedDirection { get; set; }
     public string SelfReference { get; set; } = "";
     public string AddresseeReference { get; set; } = "";
     public string ReverseSelfReference { get; set; } = "";
