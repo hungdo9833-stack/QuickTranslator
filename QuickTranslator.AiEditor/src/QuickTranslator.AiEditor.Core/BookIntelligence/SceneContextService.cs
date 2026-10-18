@@ -84,8 +84,15 @@ public sealed class BookKnowledgeContextProvider : IBookKnowledgeContextProvider
             scene?.ActiveCharacterIds.Contains(p.Id) == true).Take(12).ToArray();
         Guid[] ids = relevant.Select(x => x.Id).ToArray();
         KnowledgeRelationship[] relations = RelationshipTimelineService.ValidRelationshipsAt(_state, number)
+            // Historical AI-confirmed directional graph entries predate the explicit
+            // direction field and may be reversed. Keep them in storage for audit,
+            // but never inject them into translation context until re-confirmed.
+            .Where(x => !(x.DiscoveryMethod == RelationshipDiscoveryMethod.DirectAi &&
+                RelationshipIntelligenceQualityGate.RequiresDirection(x.RelationType)))
             .Where(x => ids.Contains(x.SubjectCharacterId) && ids.Contains(x.TargetCharacterId)).Take(16).ToArray();
         AddressingRulePeriod[] addressing = RelationshipTimelineService.ApprovedAddressingAt(_state, number)
+            .Where(x => RelationshipIntelligenceQualityGate.MayInstallAddressing(
+                x.SelfReference, x.AddresseeReference))
             .Where(x => ids.Contains(x.SpeakerCharacterId) && ids.Contains(x.ListenerCharacterId)).Take(16).ToArray();
         IntelligenceGlossarySuggestion[] terms = _state.Glossary.Where(x => x.Status == IntelligenceReviewStatus.Accepted &&
             x.Scope == GlossaryKnowledgeScope.Global && segment.SourceText.Contains(x.Chinese, StringComparison.Ordinal)).Take(24).ToArray();
